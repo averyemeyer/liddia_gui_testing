@@ -493,17 +493,6 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
                 elapsed_seconds = None
 
     elapsed_text = ""
-    if elapsed_seconds is not None or runtime.get("start_time"):
-        if elapsed_seconds is None:
-            elapsed_seconds = 0.0
-        elapsed = float(elapsed_seconds or 0.0)
-        minutes = int(elapsed // 60)
-        seconds = int(elapsed % 60)
-        start_iso = runtime.get("start_time") or ""
-        elapsed_text = (
-            " &nbsp; | &nbsp; Elapsed: "
-            f"<span id='liddia-elapsed' data-start-iso='{start_iso}'>{minutes}m {seconds}s</span>"
-        )
 
     stage_text = ""
     if latest_stage:
@@ -515,38 +504,61 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
         bar_style = "background:linear-gradient(90deg,#60a5fa,#2563eb,#60a5fa);background-size:200% 100%;animation:flow 1.6s linear infinite;"
 
     ticker_script = ""
-    if running:
-        ticker_script = (
-            "<script>"
-            "(function(){"
-            "const el=document.getElementById('liddia-elapsed');"
-            "if(!el) return;"
-            "const iso=el.dataset.startIso;"
-            "if(!iso) return;"
-            "const start=Date.parse(iso);"
-            "if(Number.isNaN(start)) return;"
-            "const update=()=>{"
-            "const s=Math.max(0, Math.floor((Date.now()-start)/1000));"
-            "const m=Math.floor(s/60);"
-            "const r=s%60;"
-            "el.textContent=`${m}m ${r}s`;"
-            "};"
-            "update();"
-            "if(window._liddiaTickerId){clearInterval(window._liddiaTickerId);}"
-            "window._liddiaTickerId=setInterval(update,1000);"
-            "})();"
-            "</script>"
-        )
 
     return (
         "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff;'>"
-        f"<div style='font-weight:600;margin-bottom:6px;'>Progress: {current_iter}/{effective_max} ({percent}%) {elapsed_text}{stage_text}</div>"
+        f"<div style='font-weight:600;margin-bottom:6px;'>Progress: {current_iter}/{effective_max} ({percent}%) {stage_text}</div>"
         "<div style='background:#f1f5f9;border-radius:8px;height:12px;overflow:hidden;'>"
         f"<div style='height:12px;width:{percent}%;{bar_style}'></div>"
         "</div></div>"
         "<style>@keyframes flow{0%{background-position:0% 50%;}100%{background-position:200% 50%;}}</style>"
-        + ticker_script
     )
+
+
+def build_elapsed_html(run_dir_str: str, run_json_str: str) -> str:
+    run_dir = _resolve_run_dir(run_dir_str, run_json_str)
+    run_json_path = None
+    if run_json_str:
+        p = Path(run_json_str)
+        if p.exists():
+            run_json_path = p
+    if run_json_path is None and run_dir:
+        run_json_path = _latest_run_json_in_dir(run_dir)
+    if run_json_path is None:
+        run_json_path = _latest_run_json()
+    run_data = _safe_read_json(run_json_path) if run_json_path else None
+    events = _load_events(run_json_path, run_dir=run_dir)
+    parsed = parse_run_data(run_data, events)
+    runtime = parsed.get("runtime", {}) or {}
+    start_iso = runtime.get("start_time")
+    if not start_iso:
+        return "<div style='padding:10px;border:1px solid #e5e7eb;border-radius:10px;'>Elapsed: —</div>"
+    try:
+        start_dt = datetime.fromisoformat(start_iso)
+    except Exception:
+        return "<div style='padding:10px;border:1px solid #e5e7eb;border-radius:10px;'>Elapsed: —</div>"
+    end_iso = runtime.get("end_time")
+    if not end_iso and _is_completed(events):
+        end_iso = runtime.get("updated_at")
+    if end_iso:
+        try:
+            end_dt = datetime.fromisoformat(end_iso)
+        except Exception:
+            end_dt = datetime.now()
+    else:
+        end_dt = datetime.now()
+    elapsed = max(0, int((end_dt - start_dt).total_seconds()))
+    minutes = elapsed // 60
+    seconds = elapsed % 60
+    label = "Elapsed"
+    if _is_completed(events):
+        label = "Final runtime"
+    return (
+        "<div style='padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;'>"
+        f"<div style='font-weight:600;'>{label}: {minutes}m {seconds}s</div>"
+        "</div>"
+    )
+
 
 
 
@@ -945,6 +957,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
         status_text_color = "#7f1d1d"
     run_dir_str = str(run_dir) if run_dir else ""
     run_json_str = str(run_json_path) if run_json_path else ""
+    metric_trends_df = build_metric_trend_df(run_dir_str, run_json_str)
     status_badge = (
         "<div style='display:flex;align-items:center;gap:8px;'>"
         f"<span style='padding:4px 10px;border-radius:999px;background:{status_color};color:{status_text_color};font-weight:600;'>{status_pill}</span>"
@@ -965,7 +978,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
                 }
             )
     run_history_df = pd.DataFrame(recent_rows, columns=["run", "json", "modified"])
-    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge, run_history_df
+    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends_df, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge, run_history_df
 
 
 def _run_lock_path() -> Path:
@@ -1357,7 +1370,43 @@ def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFr
             if val is None:
                 continue
             rows.append({"iteration": step, "metric": metric, "value": val})
+    if rows:
+        return pd.DataFrame(rows)
+    # Fallback: use run.json if events are missing (e.g., uploaded JSON only)
+    run_json_path = Path(run_json_str) if run_json_str else _latest_run_json_in_dir(run_dir)
+    run_data = _safe_read_json(run_json_path) if run_json_path and run_json_path.exists() else None
+    parsed = parse_run_data(run_data, events=None)
+    for step in parsed.get("steps", []) or []:
+        pool = step.get("pool_stats", {}) or {}
+        metrics = pool.get("metrics", {}) or {}
+        step_idx = step.get("step")
+        if step_idx is None:
+            continue
+        for metric, stats in metrics.items():
+            if not isinstance(stats, dict):
+                continue
+            val = stats.get("median")
+            if val is None:
+                continue
+            rows.append({"iteration": step_idx, "metric": metric, "value": val})
     return pd.DataFrame(rows)
+
+
+def _viewer_limits(run_dir: Optional[Path]) -> Tuple[int, int]:
+    if not run_dir:
+        return 1, 0
+    mem = _load_memory(run_dir)
+    if not mem:
+        return 1, 0
+    pool_ids = _iteration_pool_ids(mem)
+    if not pool_ids:
+        return 1, 0
+    max_iter = len(pool_ids)
+    # default mol_index max based on last pool
+    df = mem.stream.get(pool_ids[-1], {}).get("data")
+    if df is None or not hasattr(df, "__len__"):
+        return max_iter, 0
+    return max_iter, max(0, len(df) - 1)
 
 
 def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int) -> Tuple[str, str, str]:
@@ -1393,6 +1442,14 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
         return smiles, html, ""
     except Exception as e:
         return smiles, "<div>2D viewer requires RDKit.</div>", str(e)
+
+
+def _update_metric_trends(run_dir_str: str, run_json_str: str) -> pd.DataFrame:
+    return build_metric_trend_df(run_dir_str, run_json_str)
+
+
+def _update_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int):
+    return build_molecule_view(run_dir_str, run_json_str, int(iteration), int(mol_index))
 
 
 def _find_run_dir_by_json(json_path: Path) -> Optional[Path]:
@@ -1469,6 +1526,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     status = gr.Textbox(label="Run status", interactive=False, visible=False)
                     status_badge = gr.HTML(label="Status badge", visible=False)
                     progress_html = gr.HTML(label="Run summary")
+                    elapsed_html = gr.HTML(label="Elapsed time")
+                    elapsed_timer = gr.Timer(1.0)
                     live_html = gr.HTML(label="Live status", visible=False)
                     stage_html = gr.HTML(label="Action activity")
 
@@ -1549,10 +1608,15 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 outputs=[tb_status, tb_json],
             )
 
-    run_button.click(
+    run_evt = run_button.click(
         fn=run_liddia,
         inputs=[target, max_iter, model, anthropic_api_key, skip_docking, extra_args],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+    )
+    run_evt.then(
+        fn=_update_metric_trends,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends],
     )
 
     def cancel_run(run_dir_str: str) -> str:
@@ -1573,19 +1637,32 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     refresh_button.click(
         fn=load_latest_run,
         inputs=[],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+    )
+    refresh_button.click(
+        fn=_update_metric_trends,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends],
     )
 
     load_uploaded_button.click(
         fn=load_uploaded_run,
         inputs=[uploaded_run],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
     )
-    def _update_metric_trends(run_dir_str: str, run_json_str: str) -> pd.DataFrame:
-        return build_metric_trend_df(run_dir_str, run_json_str)
+    load_uploaded_button.click(
+        fn=_update_metric_trends,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends],
+    )
 
-    def _update_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int):
-        return build_molecule_view(run_dir_str, run_json_str, int(iteration), int(mol_index))
+    elapsed_timer.tick(
+        fn=build_elapsed_html,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[elapsed_html],
+    )
+
+
 
     refresh_button.click(
         fn=_update_metric_trends,
