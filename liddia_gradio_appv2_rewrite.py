@@ -516,6 +516,8 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
 
 
 def build_elapsed_html(run_dir_str: str, run_json_str: str) -> str:
+    if not run_dir_str and not run_json_str:
+        return "<div style='padding:10px;border:1px solid #e5e7eb;border-radius:10px;'>Elapsed: —</div>"
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     run_json_path = None
     if run_json_str:
@@ -1444,6 +1446,42 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
         return smiles, "<div>2D viewer requires RDKit.</div>", str(e)
 
 
+def get_viewer_limits(run_dir_str: str, run_json_str: str):
+    run_dir = _resolve_run_dir(run_dir_str, run_json_str)
+    if not run_dir:
+        return gr.update(minimum=1, maximum=1, value=1), gr.update(minimum=0, maximum=0, value=0)
+    mem = _load_memory(run_dir)
+    if not mem:
+        return gr.update(minimum=1, maximum=1, value=1), gr.update(minimum=0, maximum=0, value=0)
+    pool_ids = _iteration_pool_ids(mem)
+    if not pool_ids:
+        return gr.update(minimum=1, maximum=1, value=1), gr.update(minimum=0, maximum=0, value=0)
+    max_iter = len(pool_ids)
+    df = mem.stream.get(pool_ids[-1], {}).get("data")
+    max_idx = max(0, len(df) - 1) if df is not None else 0
+    return gr.update(minimum=1, maximum=max_iter, value=min(1, max_iter)), gr.update(minimum=0, maximum=max_idx, value=0)
+
+
+def update_index_limits(run_dir_str: str, run_json_str: str, iteration: int):
+    run_dir = _resolve_run_dir(run_dir_str, run_json_str)
+    if not run_dir:
+        return gr.update(minimum=0, maximum=0, value=0)
+    mem = _load_memory(run_dir)
+    if not mem:
+        return gr.update(minimum=0, maximum=0, value=0)
+    pool_ids = _iteration_pool_ids(mem)
+    if not pool_ids:
+        return gr.update(minimum=0, maximum=0, value=0)
+    if iteration < 1:
+        iteration = 1
+    if iteration > len(pool_ids):
+        iteration = len(pool_ids)
+    pool_id = pool_ids[iteration - 1]
+    df = mem.stream.get(pool_id, {}).get("data")
+    max_idx = max(0, len(df) - 1) if df is not None else 0
+    return gr.update(minimum=0, maximum=max_idx, value=0)
+
+
 def _update_metric_trends(run_dir_str: str, run_json_str: str) -> pd.DataFrame:
     return build_metric_trend_df(run_dir_str, run_json_str)
 
@@ -1618,6 +1656,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
     )
+    run_evt.then(
+        fn=get_viewer_limits,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[iteration_select, mol_index],
+    )
 
     def cancel_run(run_dir_str: str) -> str:
         if not run_dir_str:
@@ -1644,6 +1687,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
     )
+    refresh_button.click(
+        fn=get_viewer_limits,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[iteration_select, mol_index],
+    )
 
     load_uploaded_button.click(
         fn=load_uploaded_run,
@@ -1654,6 +1702,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
+    )
+    load_uploaded_button.click(
+        fn=get_viewer_limits,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[iteration_select, mol_index],
     )
 
     elapsed_timer.tick(
@@ -1686,6 +1739,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
         outputs=[smiles_text, mol_svg, mol_status],
+    )
+    iteration_select.change(
+        fn=update_index_limits,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[mol_index],
     )
 
     mol_index.change(
