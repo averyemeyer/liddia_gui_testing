@@ -960,6 +960,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
     run_dir_str = str(run_dir) if run_dir else ""
     run_json_str = str(run_json_path) if run_json_path else ""
     metric_trends_df = build_metric_trend_df(run_dir_str, run_json_str)
+    metric_trends_fig = build_metric_plot(filter_metric_trends(metric_trends_df, "All"))
     status_badge = (
         "<div style='display:flex;align-items:center;gap:8px;'>"
         f"<span style='padding:4px 10px;border-radius:999px;background:{status_color};color:{status_text_color};font-weight:600;'>{status_pill}</span>"
@@ -979,7 +980,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
                     "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.stat().st_mtime)),
                 }
             )
-    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends_df, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge
+    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends_fig, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge
 
 
 def _run_lock_path() -> Path:
@@ -1393,6 +1394,45 @@ def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFr
     return pd.DataFrame(rows)
 
 
+def filter_metric_trends(df: pd.DataFrame, metric: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["iteration", "metric", "value"])
+    if not metric or metric == "All":
+        out = df.copy()
+    else:
+        out = df[df["metric"] == metric].copy()
+    out["iteration"] = pd.to_numeric(out["iteration"], errors="coerce").fillna(0).astype(int)
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    return out.sort_values("iteration")
+
+
+def build_metric_plot(df: pd.DataFrame):
+    if df is None or df.empty:
+        return None
+    try:
+        import plotly.express as px
+        fig = px.line(df, x="iteration", y="value", color="metric", markers=True)
+        fig.update_xaxes(dtick=1, tickformat="d")
+        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+        return fig
+    except Exception:
+        return None
+
+
+def update_metric_controls(run_dir_str: str, run_json_str: str):
+    df = build_metric_trend_df(run_dir_str, run_json_str)
+    metrics = sorted(df["metric"].unique()) if not df.empty else []
+    choices = ["All"] + metrics
+    value = metrics[0] if metrics else "All"
+    filtered = filter_metric_trends(df, value)
+    fig = build_metric_plot(filtered)
+    return df, fig, gr.update(choices=choices, value=value)
+
+
+def apply_metric_filter(df: pd.DataFrame, metric: str):
+    return build_metric_plot(filter_metric_trends(df, metric))
+
+
 def _viewer_limits(run_dir: Optional[Path]) -> Tuple[int, int]:
     if not run_dir:
         return 1, 0
@@ -1445,6 +1485,41 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
         return smiles, "<div>2D viewer requires RDKit.</div>", str(e)
 
 
+def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, max_rows: int = 50) -> pd.DataFrame:
+    run_dir = _resolve_run_dir(run_dir_str, run_json_str)
+    if not run_dir:
+        return pd.DataFrame()
+    mem = _load_memory(run_dir)
+    if not mem:
+        return pd.DataFrame()
+    pool_ids = _iteration_pool_ids(mem)
+    if not pool_ids:
+        return pd.DataFrame()
+    if iteration <= 0:
+        iteration = 1
+    if iteration > len(pool_ids):
+        iteration = len(pool_ids)
+    pool_id = pool_ids[iteration - 1]
+    df = mem.stream.get(pool_id, {}).get("data")
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+    # Keep SMILES + numeric properties
+    cols = [c for c in df.columns]
+    out = df[cols].copy()
+    if max_rows and len(out) > max_rows:
+        out = out.head(max_rows)
+    return out
+
+
+def select_molecule_from_table(run_dir_str: str, run_json_str: str, iteration: int, evt: gr.SelectData):
+    # evt.index is row index in displayed table
+    idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+    if idx is None:
+        return gr.update(), "", "", ""
+    smiles, svg, status = build_molecule_view(run_dir_str, run_json_str, int(iteration), int(idx))
+    return gr.update(value=idx), smiles, svg, status
+
+
 def get_viewer_limits(run_dir_str: str, run_json_str: str):
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
@@ -1482,11 +1557,16 @@ def update_index_limits(run_dir_str: str, run_json_str: str, iteration: int):
 
 
 def _update_metric_trends(run_dir_str: str, run_json_str: str) -> pd.DataFrame:
-    return build_metric_trend_df(run_dir_str, run_json_str)
+    df = build_metric_trend_df(run_dir_str, run_json_str)
+    return build_metric_plot(filter_metric_trends(df, "All"))
 
 
 def _update_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int):
     return build_molecule_view(run_dir_str, run_json_str, int(iteration), int(mol_index))
+
+
+def _update_molecule_table(run_dir_str: str, run_json_str: str, iteration: int):
+    return build_molecule_table(run_dir_str, run_json_str, int(iteration))
 
 
 def _find_run_dir_by_json(json_path: Path) -> Optional[Path]:
@@ -1581,14 +1661,12 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     smiles_text = gr.Textbox(label="SMILES", interactive=False)
                     mol_svg = gr.HTML(label="2D structure")
                     mol_status = gr.Textbox(label="Viewer status", interactive=False)
+                    mol_table = gr.Dataframe(label="Molecule properties", interactive=True)
                     results_md = gr.Markdown()
                     steps_df = gr.Dataframe(label="Iteration rollup", interactive=False)
-                    metric_trends = gr.LinePlot(
-                        label="Metric trends (median)",
-                        x="iteration",
-                        y="value",
-                        color="metric",
-                    )
+                    metric_trends_state = gr.State(pd.DataFrame())
+                    metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All")
+                    metric_trends = gr.Plot(label="Metric trends (median)")
                 with gr.Column(scale=1):
                     runtime_md = gr.Markdown(visible=False)
                     report_status = gr.Textbox(label="Report status", interactive=False)
@@ -1653,6 +1731,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
     run_evt.then(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[mol_table],
+    )
+    run_evt.then(
+        fn=update_metric_controls,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends_state, metric_trends, metric_select],
+    )
+    run_evt.then(
         fn=get_viewer_limits,
         inputs=[run_dir_state, run_json_state],
         outputs=[iteration_select, mol_index],
@@ -1684,6 +1772,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
     refresh_button.click(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[mol_table],
+    )
+    refresh_button.click(
+        fn=update_metric_controls,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends_state, metric_trends, metric_select],
+    )
+    refresh_button.click(
         fn=get_viewer_limits,
         inputs=[run_dir_state, run_json_state],
         outputs=[iteration_select, mol_index],
@@ -1698,6 +1796,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
+    )
+    load_uploaded_button.click(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[mol_table],
+    )
+    load_uploaded_button.click(
+        fn=update_metric_controls,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends_state, metric_trends, metric_select],
     )
     load_uploaded_button.click(
         fn=get_viewer_limits,
@@ -1735,6 +1843,21 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
         outputs=[smiles_text, mol_svg, mol_status],
+    )
+    iteration_select.change(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[mol_table],
+    )
+    mol_table.select(
+        fn=select_molecule_from_table,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[mol_index, smiles_text, mol_svg, mol_status],
+    )
+    metric_select.change(
+        fn=apply_metric_filter,
+        inputs=[metric_trends_state, metric_select],
+        outputs=[metric_trends],
     )
     iteration_select.change(
         fn=update_index_limits,
