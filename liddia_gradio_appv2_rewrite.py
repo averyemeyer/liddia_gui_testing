@@ -1533,6 +1533,46 @@ def select_molecule_from_table(run_dir_str: str, run_json_str: str, iteration: i
     return gr.update(value=idx), smiles, svg, status
 
 
+def _pool_ids_for_run(run_dir_str: str, run_json_str: str) -> List[str]:
+    run_dir = _resolve_run_dir(run_dir_str, run_json_str)
+    if not run_dir:
+        return []
+    mem = _load_memory(run_dir)
+    if not mem:
+        return []
+    return _iteration_pool_ids(mem)
+
+
+def update_pool_selector(run_dir_str: str, run_json_str: str):
+    pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
+    if not pool_ids:
+        return gr.update(choices=[], value=None), gr.update(value=1)
+    return gr.update(choices=pool_ids, value=pool_ids[-1]), gr.update(value=len(pool_ids))
+
+
+def set_iteration_from_pool(run_dir_str: str, run_json_str: str, pool_id: str):
+    pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
+    if not pool_ids or pool_id not in pool_ids:
+        return gr.update()
+    return gr.update(value=pool_ids.index(pool_id) + 1)
+
+
+def build_pool_badge(run_dir_str: str, run_json_str: str, iteration: int) -> str:
+    pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
+    if not pool_ids:
+        return "<div style='padding:8px 10px;border:1px solid #e5e7eb;border-radius:999px;display:inline-block;'>Viewing: —</div>"
+    if iteration < 1:
+        iteration = 1
+    if iteration > len(pool_ids):
+        iteration = len(pool_ids)
+    pool_id = pool_ids[iteration - 1]
+    return (
+        "<div style='padding:8px 12px;border:1px solid #e5e7eb;border-radius:999px;display:inline-block;background:#f8fafc;'>"
+        f"<b>Viewing</b>: Iteration {iteration} · Pool {pool_id}"
+        "</div>"
+    )
+
+
 def get_viewer_limits(run_dir_str: str, run_json_str: str):
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
@@ -1669,6 +1709,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 with gr.Column(scale=2):
                     overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
                     gr.Markdown("### Molecule viewer (2D)")
+                    pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
+                    pool_badge = gr.HTML()
                     iteration_select = gr.Number(label="Iteration", value=1, precision=0)
                     mol_index = gr.Number(label="Molecule index", value=0, precision=0)
                     smiles_text = gr.Textbox(label="SMILES", interactive=False)
@@ -1744,6 +1786,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
     run_evt.then(
+        fn=update_pool_selector,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[pool_select, iteration_select],
+    )
+    run_evt.then(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[pool_badge],
+    )
+    run_evt.then(
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
@@ -1785,6 +1837,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
     refresh_button.click(
+        fn=update_pool_selector,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[pool_select, iteration_select],
+    )
+    refresh_button.click(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[pool_badge],
+    )
+    refresh_button.click(
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
@@ -1809,6 +1871,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
+    )
+    load_uploaded_button.click(
+        fn=update_pool_selector,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[pool_select, iteration_select],
+    )
+    load_uploaded_button.click(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[pool_badge],
     )
     load_uploaded_button.click(
         fn=_update_molecule_table,
@@ -1858,9 +1930,19 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[smiles_text, mol_svg, mol_status],
     )
     iteration_select.change(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select],
+        outputs=[pool_badge],
+    )
+    iteration_select.change(
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
+    )
+    pool_select.change(
+        fn=set_iteration_from_pool,
+        inputs=[run_dir_state, run_json_state, pool_select],
+        outputs=[iteration_select],
     )
     mol_table.select(
         fn=select_molecule_from_table,
