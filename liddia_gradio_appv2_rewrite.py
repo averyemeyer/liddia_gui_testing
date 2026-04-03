@@ -1411,9 +1411,22 @@ def build_metric_plot(df: pd.DataFrame):
         return None
     try:
         import plotly.express as px
-        fig = px.line(df, x="iteration", y="value", color="metric", markers=True)
-        fig.update_xaxes(dtick=1, tickformat="d")
-        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+        fig = px.line(
+            df,
+            x="iteration",
+            y="value",
+            color="metric",
+            markers=True,
+            hover_data={"iteration": True, "value": ":.4f", "metric": True},
+        )
+        fig.update_traces(line=dict(width=2), marker=dict(size=7))
+        fig.update_xaxes(dtick=1, tickformat="d", title="iteration")
+        fig.update_yaxes(title="value")
+        fig.update_layout(
+            margin=dict(l=10, r=10, t=10, b=10),
+            height=320,
+            hovermode="x unified",
+        )
         return fig
     except Exception:
         return None
