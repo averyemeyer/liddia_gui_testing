@@ -10,10 +10,11 @@ import numpy as np
 import json
 import fire
 import pickle
+import threading
 from datetime import datetime
 from tqdm import tqdm
 from anthropic import Anthropic
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from pprint import pprint
 
 from liddia.action import *
@@ -38,39 +39,36 @@ def _load_anthropic_key() -> str:
 def _write_run_snapshot(path_to_log: str, target: str, logger: Dict) -> None:
     try:
         snapshot_path = os.path.join(path_to_log, f"{target}.json")
-        with open(snapshot_path, "w") as file:
+        tmp_path = os.path.join(path_to_log, f".{target}.json.tmp")
+        with open(tmp_path, "w") as file:
             json.dump(logger, file, indent=4)
+        os.replace(tmp_path, snapshot_path)
     except Exception:
         # Best-effort snapshotting; do not fail the run.
         pass
 
 
-def _append_event(path_to_log: str, event: Dict) -> None:
-    try:
-        def _jsonable(value):
-            if isinstance(value, (np.integer, np.floating)):
-                return value.item()
-            if isinstance(value, dict):
-                return {k: _jsonable(v) for k, v in value.items()}
-            if isinstance(value, (list, tuple)):
-                return [_jsonable(v) for v in value]
-            return value
-
-        events_path = os.path.join(path_to_log, "events.jsonl")
-        with open(events_path, "a") as f:
-            f.write(json.dumps(_jsonable(event)) + "\n")
-    except Exception:
-        # Best-effort event logging; do not fail the run.
-        pass
-
-
-def _with_runtime(runtime: Dict, start_time: float) -> Dict:
-    runtime = dict(runtime or {})
+def _update_runtime(logger: Dict, start_time: float, current_iter: int, max_iter: int, end_time: Optional[str] = None) -> None:
+    runtime = dict(logger.get("runtime", {}) or {})
+    runtime["current_iter"] = current_iter
+    runtime["max_iter"] = max_iter
     runtime["updated_at"] = datetime.now().isoformat()
     runtime["elapsed_seconds"] = time.time() - start_time
     if "start_time" not in runtime:
         runtime["start_time"] = datetime.now().isoformat()
-    return runtime
+    if end_time:
+        runtime["end_time"] = end_time
+    logger["runtime"] = runtime
+
+
+def _heartbeat(path_to_log: str, target: str, logger: Dict, start_time: float, stop_event: threading.Event, lock: threading.Lock, interval_s: float = 2.0) -> None:
+    while not stop_event.is_set():
+        with lock:
+            current_iter = logger.get("runtime", {}).get("current_iter", 0)
+            max_iter = logger.get("runtime", {}).get("max_iter", 0)
+            _update_runtime(logger, start_time, current_iter, max_iter)
+            _write_run_snapshot(path_to_log, target, logger)
+        stop_event.wait(interval_s)
 
 
 def _cancel_requested(path_to_log: str) -> bool:
@@ -169,57 +167,32 @@ def main(target: str = "ABCC8",
     resource = task["resource"]
     pbar = tqdm(range(max_iter))
     eval_str = ""
+    stop_event: Optional[threading.Event] = None
+    heartbeat: Optional[threading.Thread] = None
+    runtime_lock = threading.Lock()
     try:
         start_time = time.time()
-        _append_event(
-            path_to_log,
-            {
-                "type": "status",
-                "stage": "initializing",
-                "label": "Initializing run",
-                "step": 0,
-                "runtime": {
-                    "current_iter": 0,
-                    "max_iter": max_iter,
-                    "updated_at": datetime.now().isoformat(),
-                    "start_time": datetime.now().isoformat(),
-                    "elapsed_seconds": 0.0,
-                },
-            },
+        stop_event = threading.Event()
+        _update_runtime(logger, start_time, 0, max_iter)
+        _write_run_snapshot(path_to_log, task["target"], logger)
+        heartbeat = threading.Thread(
+            target=_heartbeat,
+            args=(path_to_log, task["target"], logger, start_time, stop_event, runtime_lock, 2.0),
+            daemon=True,
         )
+        heartbeat.start()
         for n_iter in pbar:
             step_display = n_iter + 1
             if _cancel_requested(path_to_log):
                 logger["success"] = False
                 logger["cancelled"] = True
-                _append_event(
-                    path_to_log,
-                    {
-                        "type": "status",
-                        "stage": "cancelled",
-                            "end_time": datetime.now().isoformat(),
-                        "label": "Run cancelled by user",
-                        "step": step_display,
-                        "runtime": _with_runtime(
-                            {
-                            "current_iter": step_display,
-                            "max_iter": max_iter,
-                            "start_time": logger.get("runtime", {}).get("start_time") or datetime.now().isoformat(),
-                            },
-                            start_time,
-                        ),
-                    },
-                )
-                _write_run_snapshot(path_to_log, task["target"], logger)
+                with runtime_lock:
+                    _update_runtime(logger, start_time, step_display, max_iter, end_time=datetime.now().isoformat())
+                    _write_run_snapshot(path_to_log, task["target"], logger)
                 break
             logger[n_iter] = {}
-            logger["runtime"] = {
-                "current_iter": step_display,
-                "max_iter": max_iter,
-                "updated_at": datetime.now().isoformat(),
-                "start_time": logger.get("runtime", {}).get("start_time") or datetime.now().isoformat(),
-                "elapsed_seconds": time.time() - start_time,
-            }
+            with runtime_lock:
+                _update_runtime(logger, start_time, step_display, max_iter)
             
             #CREATE CONTEXT
             context_mol_dicts, context_pocket_dicts, context_action_dicts = [], [], []
@@ -258,18 +231,6 @@ def main(target: str = "ABCC8",
             else:
                 label = f"Processing action ({action_id})"
 
-            _append_event(
-                path_to_log,
-                {
-                    "type": "status",
-                    "stage": "processing",
-                    "label": label,
-                    "step": step_display,
-                    "action": action_id,
-                    "action_input": action_input,
-                    "runtime": _with_runtime(logger["runtime"], start_time),
-                },
-            )
             action_output, cost, metadata = run_action(action_id, action_input, memory=memory, agent=agent, metrics=task["metrics"], target_pdb=task["pocket"],  drugs=task["drugs"], env_dir=env_dir, log_dir=path_to_log)
             logger[n_iter]["action_output"] = action_output
             resource = resource - cost
@@ -277,18 +238,6 @@ def main(target: str = "ABCC8",
             pool_stats = _build_pool_stats(action_output, memory, task["metrics"])
             #EVALUATE
             if action_output in memory.stream.keys():
-                _append_event(
-                    path_to_log,
-                    {
-                        "type": "status",
-                        "stage": "evaluating",
-                        "label": "Evaluating (docking + scoring)",
-                        "step": step_display,
-                        "action": action_id,
-                        "action_output": action_output,
-                        "runtime": _with_runtime(logger["runtime"], start_time),
-                    },
-                )
                 #stop or not
                 goal_mol_str = get_mol_str([{"id": action_output, "metrics": memory.stream[action_output]["metrics"]}], mol_fmt)
                 input_goal_prompt = check_goal_fmt.format(mol_str=goal_mol_str, req_str=req_str)
@@ -296,60 +245,11 @@ def main(target: str = "ABCC8",
                 logger[n_iter]["input_goal_prompt"] = input_goal_prompt
                 answer, goal_reason = get_goal_answer_response(goal_response)
                 logger[n_iter]["goal_response"] = goal_response
-                _append_event(
-                    path_to_log,
-                    {
-                        "type": "status",
-                        "stage": "evaluation_complete",
-                        "label": f"Goal check: {answer} — summarizing outcome",
-                        "step": step_display,
-                        "action": action_id,
-                        "action_output": action_output,
-                        "runtime": _with_runtime(logger["runtime"], start_time),
-                    },
-                )
-
-                _append_event(
-                    path_to_log,
-                    {
-                        "type": "status",
-                        "stage": "outputting",
-                        "label": f"Outputting your results table ({action_id})",
-                        "step": step_display,
-                        "action": action_id,
-                        "action_input": action_input,
-                        "action_output": action_output,
-                        "pool_stats": pool_stats,
-                        "runtime": _with_runtime(logger["runtime"], start_time),
-                    },
-                )
                 if answer == "YES":
                     logger["success"] = True
-                    _write_run_snapshot(path_to_log, task["target"], logger)
-                    _append_event(
-                        path_to_log,
-                        {
-                            "type": "goal_eval",
-                            "step": step_display,
-                            "action": action_id,
-                            "action_input": action_input,
-                            "action_output": action_output,
-                            "pool_stats": pool_stats,
-                            "goal_eval": {"answer": answer, "reason": goal_reason},
-                            "runtime": logger["runtime"],
-                        },
-                    )
-                    _append_event(
-                        path_to_log,
-                        {
-                            "type": "status",
-                            "stage": "completed",
-                            "end_time": datetime.now().isoformat(),
-                            "label": "Run completed — ready to review results",
-                            "step": step_display,
-                            "runtime": _with_runtime(logger["runtime"], start_time),
-                        },
-                    )
+                    with runtime_lock:
+                        _update_runtime(logger, start_time, step_display, max_iter, end_time=datetime.now().isoformat())
+                        _write_run_snapshot(path_to_log, task["target"], logger)
                     break
             
             #UPDATE
@@ -359,56 +259,31 @@ def main(target: str = "ABCC8",
             #OTHER
             if resource <= 0:
                 logger["success"] = False
-                _write_run_snapshot(path_to_log, task["target"], logger)
-                _append_event(
-                    path_to_log,
-                    {
-                        "type": "goal_eval",
-                        "step": step_display,
-                        "action": action_id,
-                        "action_input": action_input,
-                        "action_output": action_output,
-                        "pool_stats": pool_stats,
-                        "goal_eval": {"answer": answer if "answer" in locals() else None, "reason": goal_reason if "goal_reason" in locals() else None},
-                        "runtime": _with_runtime(logger["runtime"], start_time),
-                    },
-                )
-                _append_event(
-                    path_to_log,
-                    {
-                        "type": "status",
-                        "stage": "completed",
-                            "end_time": datetime.now().isoformat(),
-                        "label": "Run finished — resource budget exhausted",
-                        "step": step_display,
-                        "runtime": _with_runtime(logger["runtime"], start_time),
-                    },
-                )
+                with runtime_lock:
+                    _update_runtime(logger, start_time, step_display, max_iter, end_time=datetime.now().isoformat())
+                    _write_run_snapshot(path_to_log, task["target"], logger)
                 break
-            _write_run_snapshot(path_to_log, task["target"], logger)
-            _append_event(
-                path_to_log,
-                {
-                    "type": "goal_eval",
-                    "step": step_display,
-                    "action": action_id,
-                    "action_input": action_input,
-                    "action_output": action_output,
-                    "pool_stats": pool_stats,
-                    "goal_eval": {"answer": answer if "answer" in locals() else None, "reason": goal_reason if "goal_reason" in locals() else None},
-                    "runtime": _with_runtime(logger["runtime"], start_time),
-                },
-            )
+            with runtime_lock:
+                _write_run_snapshot(path_to_log, task["target"], logger)
         if "success" not in logger.keys():
             logger["success"] = False
     except Exception as e:
         logger["success"] = False
         logger["error_message"] = traceback.format_exc() + str(e)
+        with runtime_lock:
+            _update_runtime(logger, start_time, logger.get("runtime", {}).get("current_iter", 0), max_iter, end_time=datetime.now().isoformat())
     
     logger["task"] = task
 
-    with open(os.path.join(log_dir, run_id, f"{task['target']}.json"), "w") as file:
-        json.dump(logger, file, indent=4)  # indent for pretty formatting
+    if logger.get("success") is not None and logger.get("runtime", {}).get("end_time") is None:
+        with runtime_lock:
+            _update_runtime(logger, start_time, logger.get("runtime", {}).get("current_iter", 0), max_iter, end_time=datetime.now().isoformat())
+    if stop_event is not None:
+        stop_event.set()
+    if heartbeat is not None:
+        heartbeat.join(timeout=2)
+    with runtime_lock:
+        _write_run_snapshot(path_to_log, task["target"], logger)
     with open(os.path.join(log_dir, run_id, f"{task['target']}_memory.pkl"), 'wb') as f:
         pickle.dump(memory, f)
     with open(os.path.join(log_dir, run_id, f"{task['target']}_agent_messages.pkl"), 'wb') as f:

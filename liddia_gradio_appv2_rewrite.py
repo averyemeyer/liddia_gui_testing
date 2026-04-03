@@ -20,7 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parent
 RUN_PY = REPO_ROOT / "run.py"
 LOG_ROOT = REPO_ROOT / "log"
 PDB_DIR = REPO_ROOT / "dataset" / "pdb"
-EVENTS_FILENAME = "events.jsonl"
 
 def _detect_targets() -> List[str]:
     if not PDB_DIR.exists():
@@ -67,27 +66,6 @@ def _safe_read_json(path: Path) -> Optional[Dict[str, Any]]:
         return json.loads(path.read_text())
     except Exception:
         return None
-
-
-def _load_events(run_json_path: Optional[Path], run_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
-    if run_dir is None and not run_json_path:
-        return []
-    events_path = (run_dir or run_json_path.parent) / EVENTS_FILENAME
-    if not events_path.exists():
-        return []
-    events: List[Dict[str, Any]] = []
-    try:
-        for line in events_path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except Exception:
-                continue
-    except Exception:
-        return []
-    return events
 
 
 def _latest_run_json() -> Optional[Path]:
@@ -220,11 +198,12 @@ def _parse_pool_stats(text: str) -> Dict[str, Any]:
     return stats
 
 
-def parse_run_data(run_data: Optional[Dict[str, Any]], events: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    if not run_data and not events:
+def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not run_data:
         return {
             "model": None,
             "success": None,
+            "cancelled": None,
             "error_message": None,
             "task": {},
             "runtime": {},
@@ -234,77 +213,6 @@ def parse_run_data(run_data: Optional[Dict[str, Any]], events: Optional[List[Dic
         }
 
     steps: List[Dict[str, Any]] = []
-    if events:
-        steps_map: Dict[int, Dict[str, Any]] = {}
-        runtime = {}
-        for payload in events:
-            step_idx = payload.get("step")
-            if step_idx is None:
-                continue
-            try:
-                step_int = int(step_idx)
-            except Exception:
-                continue
-
-            has_action_data = any(
-                payload.get(key) is not None
-                for key in ["action", "action_input", "action_output", "pool_stats", "goal_eval"]
-            )
-            is_status = payload.get("type") == "status"
-
-            if not has_action_data and not is_status:
-                continue
-            if payload.get("stage") in {"initializing", "completed"} and not has_action_data:
-                continue
-
-            entry = steps_map.setdefault(
-                step_int,
-                {
-                    "step": step_int,
-                    "action_name": None,
-                    "action_input": None,
-                    "action_output": None,
-                    "response": "",
-                    "input_prompt": "",
-                    "input_goal_prompt": "",
-                    "goal_response": "",
-                    "pool_stats": {},
-                    "goal_eval": {},
-                    "stage_status": None,
-                },
-            )
-
-            if payload.get("action") is not None:
-                entry["action_name"] = payload.get("action")
-            if payload.get("action_input") is not None:
-                entry["action_input"] = payload.get("action_input")
-            if payload.get("action_output") is not None:
-                entry["action_output"] = payload.get("action_output")
-            if payload.get("pool_stats"):
-                entry["pool_stats"] = payload.get("pool_stats")
-            if payload.get("goal_eval"):
-                entry["goal_eval"] = payload.get("goal_eval")
-            if payload.get("stage"):
-                entry["stage_status"] = payload.get("stage")
-            if payload.get("label"):
-                entry["stage_label"] = payload.get("label")
-
-            if payload.get("type") == "status" and payload.get("runtime"):
-                runtime = payload.get("runtime") or runtime
-
-        steps = [steps_map[k] for k in sorted(steps_map.keys())]
-        final_pool = steps[-1]["pool_stats"] if steps else {}
-        return {
-            "model": run_data.get("model") if run_data else None,
-            "success": bool(run_data.get("success", False)) if run_data else False,
-            "error_message": run_data.get("error_message") if run_data else None,
-            "task": run_data.get("task", {}) if run_data and isinstance(run_data.get("task"), dict) else {},
-            "runtime": runtime,
-            "steps": steps,
-            "final_pool": final_pool,
-            "step_count": len(steps),
-        }
-
     for idx, payload in _extract_iterations(run_data):
         action = payload.get("action")
         action_name = None
@@ -341,7 +249,8 @@ def parse_run_data(run_data: Optional[Dict[str, Any]], events: Optional[List[Dic
     final_pool = steps[-1]["pool_stats"] if steps else {}
     return {
         "model": run_data.get("model"),
-        "success": bool(run_data.get("success", False)),
+        "success": run_data.get("success") if "success" in run_data else None,
+        "cancelled": run_data.get("cancelled", False),
         "error_message": run_data.get("error_message"),
         "task": run_data.get("task", {}) if isinstance(run_data.get("task"), dict) else {},
         "runtime": run_data.get("runtime", {}) if isinstance(run_data.get("runtime"), dict) else {},
@@ -373,7 +282,16 @@ def build_run_overview(parsed: Dict[str, Any], run_json_path: Optional[Path]) ->
     if not has_real_data:
         return "Run overview will appear once a run has produced results."
 
-    lines.append(f"Status: {'SUCCESS' if parsed.get('success') else 'IN PROGRESS'}")
+    status = "IN PROGRESS"
+    if parsed.get("success") is True:
+        status = "SUCCESS"
+    elif parsed.get("success") is False:
+        status = "COMPLETED"
+    if parsed.get("cancelled"):
+        status = "CANCELLED"
+    if parsed.get("error_message"):
+        status = "FAILED"
+    lines.append(f"Status: {status}")
     lines.append(f"Target: {task.get('target', 'Unknown')}")
     lines.append(f"Model: {parsed.get('model') or 'Unknown'}")
     lines.append(f"Iterations executed: {parsed.get('step_count', 0)}")
@@ -457,9 +375,9 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
     current_iter = runtime.get("current_iter")
     max_iter = runtime.get("max_iter")
     elapsed_seconds = runtime.get("elapsed_seconds")
-    events = parsed.get("events") if isinstance(parsed.get("events"), list) else None
-    latest_stage = _latest_status_event(events)
-    running = not _is_completed(events)
+    steps = parsed.get("steps", []) or []
+    latest_step = steps[-1] if steps else None
+    running = not _is_completed(parsed)
     if max_iter is None:
         max_iter = parsed.get("task", {}).get("resource") or parsed.get("step_count")
     if current_iter is None:
@@ -495,9 +413,12 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
     elapsed_text = ""
 
     stage_text = ""
-    if latest_stage:
-        phase_label = _action_phase_label(latest_stage)
-        stage_text = f" &nbsp; | &nbsp; Action: {phase_label}"
+    if latest_step:
+        phase_label = _action_label(latest_step.get("action_name"))
+        if latest_step.get("goal_response") or (latest_step.get("goal_eval") or {}).get("answer"):
+            stage_text = f" &nbsp; | &nbsp; Action: {phase_label} → Evaluating"
+        else:
+            stage_text = f" &nbsp; | &nbsp; Action: {phase_label}"
 
     bar_style = "background:#3b82f6;"
     if running:
@@ -529,8 +450,7 @@ def build_elapsed_html(run_dir_str: str, run_json_str: str) -> str:
     if run_json_path is None:
         run_json_path = _latest_run_json()
     run_data = _safe_read_json(run_json_path) if run_json_path else None
-    events = _load_events(run_json_path, run_dir=run_dir)
-    parsed = parse_run_data(run_data, events)
+    parsed = parse_run_data(run_data)
     runtime = parsed.get("runtime", {}) or {}
     start_iso = runtime.get("start_time")
     if not start_iso:
@@ -540,7 +460,7 @@ def build_elapsed_html(run_dir_str: str, run_json_str: str) -> str:
     except Exception:
         return "<div style='padding:10px;border:1px solid #e5e7eb;border-radius:10px;'>Elapsed: —</div>"
     end_iso = runtime.get("end_time")
-    if not end_iso and _is_completed(events):
+    if not end_iso and _is_completed(parsed):
         end_iso = runtime.get("updated_at")
     if end_iso:
         try:
@@ -553,7 +473,7 @@ def build_elapsed_html(run_dir_str: str, run_json_str: str) -> str:
     minutes = elapsed // 60
     seconds = elapsed % 60
     label = "Elapsed"
-    if _is_completed(events):
+    if _is_completed(parsed):
         label = "Final runtime"
     return (
         "<div style='padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;'>"
@@ -564,126 +484,78 @@ def build_elapsed_html(run_dir_str: str, run_json_str: str) -> str:
 
 
 
-def _latest_status_event(events: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-    if not events:
-        return None
-    for ev in reversed(events):
-        if ev.get("type") == "status":
-            return ev
-    return None
+def _is_completed(parsed: Dict[str, Any]) -> bool:
+    if parsed.get("cancelled") or parsed.get("error_message"):
+        return True
+    if parsed.get("success") is not None:
+        return True
+    runtime = parsed.get("runtime", {}) or {}
+    return bool(runtime.get("end_time"))
 
 
-def _is_completed(events: Optional[List[Dict[str, Any]]]) -> bool:
-    if not events:
-        return False
-    for ev in reversed(events):
-        if ev.get("type") == "status" and ev.get("stage") in {"completed", "cancelled"}:
-            return True
-    return False
+def _action_label(action_name: Optional[str]) -> str:
+    return action_name or "—"
 
-
-
-
-def _action_phase_label(payload: Dict[str, Any]) -> str:
-    action = (payload.get("action") or "").upper()
-    if action.startswith("GENERATE"):
-        return "Generating molecules"
-    if action.startswith("OPTIMIZE"):
-        return "Optimizing molecules"
-    if action.startswith("CODE"):
-        return "Running custom chemistry code"
-    stage = payload.get("stage")
-    label = payload.get("label")
-    if label:
-        return str(label)
-    stage_labels = {
-        "initializing": "Initializing",
-        "processing": "Generating molecules",
-        "docking": "Docking",
-        "scoring": "Scoring",
-        "evaluating": "Evaluating",
-        "outputting": "Outputting",
-        "evaluation_complete": "Goal check",
-        "completed": "Completed",
-        "cancelled": "Cancelled",
-    }
-    if stage in stage_labels:
-        return stage_labels[stage]
-    return str(action) if action else "—"
-
-def build_action_timeline(parsed: Dict[str, Any], events: Optional[List[Dict[str, Any]]] = None) -> str:
-    if not events:
+def build_action_timeline(parsed: Dict[str, Any]) -> str:
+    steps = parsed.get("steps", []) or []
+    if not steps:
         return "<div style='padding:12px;border:1px solid #ddd;border-radius:8px;'>No stage timeline yet.</div>"
 
     stage_colors = {
-        "initializing": "#64748b",
-        "processing": "#2563eb",
-        "docking": "#0ea5e9",
-        "scoring": "#f59e0b",
-        "evaluating": "#f59e0b",
-        "outputting": "#16a34a",
-        "evaluation_complete": "#10b981",
-        "completed": "#22c55e",
-        "cancelled": "#ef4444",
+        "action": "#2563eb",
+        "evaluate": "#f59e0b",
+        "goal_yes": "#22c55e",
+        "goal_no": "#f97316",
+        "done": "#16a34a",
     }
-
-    stage_labels = {
-        "initializing": "Initializing",
-        "processing": "Processing",
-        "docking": "Docking",
-        "scoring": "Scoring",
-        "evaluating": "Evaluating",
-        "outputting": "Outputting",
-        "evaluation_complete": "Evaluation complete",
-        "completed": "Completed",
-        "cancelled": "Cancelled",
-    }
-
-    grouped: Dict[int, List[Dict[str, Any]]] = {}
-    for payload in events:
-        if payload.get("type") != "status":
-            continue
-        if payload.get("stage") == "initializing":
-            continue
-        step = payload.get("step")
-        if step is None:
-            continue
-        try:
-            step = int(step)
-        except Exception:
-            continue
-        grouped.setdefault(step, []).append(payload)
 
     items: List[str] = []
-    for step in sorted(grouped.keys()):
+    for step in steps:
         stage_items: List[str] = []
-        last_label = None
-        for payload in grouped[step]:
-            stage = payload.get("stage") or "unknown"
-            color = stage_colors.get(stage, "#64748b")
-            label = payload.get("label") or stage_labels.get(stage, stage.replace("_", " "))
-            display_label = label
-            if display_label == last_label:
-                continue
-            last_label = display_label
+        action_label = _action_label(step.get("action_name"))
+        stage_items.append(
+            "<div style='display:flex;align-items:center;gap:8px;margin:6px 0;'>"
+            f"<div style='width:8px;height:8px;border-radius:50%;background:{stage_colors['action']};'></div>"
+            f"<div style='color:#0f172a;font-weight:600;'>{action_label}</div>"
+            "</div>"
+        )
+        goal_eval = step.get("goal_eval", {}) or {}
+        answer = goal_eval.get("answer")
+        if step.get("goal_response") or step.get("input_goal_prompt") or answer:
+            eval_label = "Evaluating (docking + scoring)"
+            color = stage_colors["evaluate"]
+            if answer:
+                eval_label = f"Goal check: {answer}"
+                color = stage_colors["goal_yes"] if answer == "YES" else stage_colors["goal_no"]
             stage_items.append(
                 "<div style='display:flex;align-items:center;gap:8px;margin:6px 0;'>"
                 f"<div style='width:8px;height:8px;border-radius:50%;background:{color};'></div>"
-                f"<div style='color:#0f172a;font-weight:600;'> {display_label}</div>"
+                f"<div style='color:#0f172a;font-weight:600;'>{eval_label}</div>"
                 "</div>"
             )
+
         items.append(
             "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:10px;margin-bottom:10px;background:#fff;'>"
-            f"<div style='font-weight:700;margin-bottom:6px;'>Iteration {step}</div>"
+            f"<div style='font-weight:700;margin-bottom:6px;'>Iteration {step.get('step')}</div>"
             + "".join(stage_items)
             + "</div>"
+        )
+
+    if _is_completed(parsed):
+        items.append(
+            "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:10px;margin-bottom:10px;background:#fff;'>"
+            "<div style='display:flex;align-items:center;gap:8px;'>"
+            f"<div style='width:8px;height:8px;border-radius:50%;background:{stage_colors['done']};'></div>"
+            "<div style='color:#0f172a;font-weight:600;'>Run completed — ready to review results</div>"
+            "</div></div>"
         )
 
     return "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;'>" + "".join(items) + "</div>"
 
 
-def build_stage_panel(parsed: Dict[str, Any], events: Optional[List[Dict[str, Any]]] = None) -> str:
-    if not events:
+def build_stage_panel(parsed: Dict[str, Any]) -> str:
+    steps = parsed.get("steps", []) or []
+    if not steps:
         status_text = parsed.get("status_text") or ""
         if "Starting" in status_text or "Run in progress" in status_text:
             return (
@@ -697,99 +569,54 @@ def build_stage_panel(parsed: Dict[str, Any], events: Optional[List[Dict[str, An
             )
         return "<div style='padding:12px;border:1px solid #e5e7eb;border-radius:8px;'>No run yet. Click <b>Run LIDDiA</b> to start.</div>"
 
-    latest = _latest_status_event(events)
-    completed = _is_completed(events)
+    completed = _is_completed(parsed)
+    latest_step = steps[-1]
 
     if not completed:
-        if not latest:
-            return "<div style='padding:12px;border:1px solid #ddd;border-radius:8px;'>Waiting for live stages...</div>"
-        label = latest.get("label") or latest.get("stage") or "Running..."
-        action = latest.get("action") or "—"
-        phase_label = _action_phase_label(latest)
-        step = latest.get("step")
-        molecule_icon = (
-            "<span style='display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:4px;'>"
-            "<svg viewBox='0 0 24 24' width='14' height='14' style='display:block'>"
-            "<polygon points='12,2 20,7 20,17 12,22 4,17 4,7' fill='none' stroke='#60a5fa' stroke-width='2'/>"
-            "<circle cx='12' cy='2' r='1.5' fill='#3b82f6'/>"
-            "<circle cx='20' cy='7' r='1.5' fill='#60a5fa'/>"
-            "<circle cx='20' cy='17' r='1.5' fill='#93c5fd'/>"
-            "</svg></span>"
-        )
-        friendly_label = label.replace("Generating molecules", f"{molecule_icon} Generating molecules")
-        friendly_label = friendly_label.replace("Optimizing molecule properties", f"{molecule_icon} Optimizing molecule properties")
-        friendly_label = friendly_label.replace("Running custom chemistry code", f"{molecule_icon} Running custom chemistry code")
-        friendly_label = friendly_label.replace("Outputting your results table", f"{molecule_icon} Outputting your results table")
+        action_label = _action_label(latest_step.get("action_name"))
+        if latest_step.get("goal_response") or (latest_step.get("goal_eval") or {}).get("answer"):
+            action_label = f"{action_label} → Evaluating"
         return (
             "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;'>"
             "<div style='font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;'>"
             "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;animation:pulseDot 1.4s ease-in-out infinite;'></span>"
             "Current stage"
             "<span style='display:inline-block;width:12px;height:12px;border:2px solid #94a3b8;border-top-color:#2563eb;border-radius:50%;animation:spin 0.9s linear infinite;'></span>"
-            "<span style='display:inline-block;width:8px;height:8px;border-radius:2px;background:#60a5fa;transform:rotate(45deg);animation:orbit 1.6s ease-in-out infinite;'></span>"
             "</div>"
-            f"<div style='margin-bottom:6px;'>Action: {phase_label}</div>"
-            f"<div>Iteration: {step if step is not None else '—'}</div>"
-            "<style>"
-            "@keyframes pulseDot{0%{transform:scale(0.8);opacity:0.5;}50%{transform:scale(1.2);opacity:1;}100%{transform:scale(0.8);opacity:0.5;}}"
-            "@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}"
-            "@keyframes orbit{0%{transform:rotate(0deg) translateX(0);}50%{transform:rotate(20deg) translateX(2px);}100%{transform:rotate(0deg) translateX(0);}}"
-            "</style>"
+            f"<div style='margin-bottom:6px;'>Action: {action_label}</div>"
+            f"<div>Iteration: {latest_step.get('step') if latest_step.get('step') is not None else '—'}</div>"
+            "<style>@keyframes pulseDot{0%{transform:scale(0.8);opacity:0.5;}50%{transform:scale(1.2);opacity:1;}100%{transform:scale(0.8);opacity:0.5;}}"
+            "@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>"
             "</div>"
         )
 
-    # Completed: show grouped history
-    return build_action_timeline(parsed, events=events)
+    return build_action_timeline(parsed)
 
 
-def build_live_status(events: Optional[List[Dict[str, Any]]]) -> str:
-    if not events:
+def build_live_status(parsed: Dict[str, Any]) -> str:
+    steps = parsed.get("steps", []) or []
+    if not steps:
         return "<div style='padding:12px;border:1px solid #ddd;border-radius:8px;'>No live status yet.</div>"
-    latest = None
-    for ev in reversed(events):
-        if ev.get("type") == "status":
-            latest = ev
-            break
-    if latest is None:
-        latest = events[-1]
-    label = latest.get("label") or "Running..."
-    stage = latest.get("stage") or "unknown"
-    step = latest.get("step")
-    action = latest.get("action")
-    stage_labels = {
-        "initializing": "Initializing",
-        "processing": "Processing",
-        "docking": "Docking",
-        "scoring": "Scoring",
-        "evaluating": "Evaluating",
-        "outputting": "Outputting",
-        "evaluation_complete": "Evaluation complete",
-        "completed": "Completed",
-        "cancelled": "Cancelled",
-    }
-    action_labels = {
-        "GENERATE": "Generate molecules",
-        "OPTIMIZE": "Optimize molecules",
-        "CODE": "Run custom code",
-    }
-    stage_label = stage_labels.get(stage, stage.replace("_", " "))
-    phase_label = _action_phase_label(latest)
-    action_label = action_labels.get((action or "").upper(), action or "—")
-    running = stage not in {"completed", "cancelled"}
+    latest_step = steps[-1]
+    action_label = _action_label(latest_step.get("action_name"))
+    answer = (latest_step.get("goal_eval") or {}).get("answer")
+    if latest_step.get("goal_response") or answer:
+        if answer:
+            action_label = f"Goal check: {answer}"
+        else:
+            action_label = f"{action_label} → Evaluating"
+    running = not _is_completed(parsed)
     status_spinner = ""
     if running:
         status_spinner = "<span style='display:inline-block;width:10px;height:10px;border:2px solid #cbd5f5;border-top-color:#6366f1;border-radius:50%;animation:spin 0.9s linear infinite;'></span>"
     return (
         "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;'>"
         f"<div style='font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;'>Live status {status_spinner}</div>"
-        f"<div style='margin-bottom:6px;' title='Action = current action for this iteration.'>Action: {phase_label}</div>"
-        f"<div style='margin-bottom:6px;'>Label: {label}</div>"
-        f"<div>Iteration: {step if step is not None else '—'}</div>"
+        f"<div style='margin-bottom:6px;' title='Action = current action for this iteration.'>Action: {action_label}</div>"
+        f"<div>Iteration: {latest_step.get('step') if latest_step.get('step') is not None else '—'}</div>"
         "<style>@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>"
         "</div>"
     )
-
-
 
 
 def build_timeline_markdown(parsed: Dict[str, Any]) -> str:
@@ -919,9 +746,8 @@ def _build_summary(run_data: Dict[str, Any], run_json_path: Optional[Path]) -> s
 
 # ---------- run/load functions ----------
 def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_json_path: Optional[Path], logs_text: str, run_dir: Optional[Path] = None):
-    events = _load_events(run_json_path, run_dir=run_dir)
-    parsed = parse_run_data(run_data, events=events)
-    parsed["events"] = events
+    parsed = parse_run_data(run_data)
+    parsed = _enrich_parsed_with_memory(parsed, run_dir)
     parsed["status_text"] = status_text
     summary = build_run_overview(parsed, run_json_path)
     progress_html = build_progress_html(parsed)
@@ -932,24 +758,19 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
     metrics_df = build_metrics_table(parsed)
     steps_df = build_step_table(parsed)
     trend_html = "<div style='padding:12px;border:1px solid #ddd;border-radius:8px;'>Metric trends temporarily disabled.</div>"
-    stage_html = build_stage_panel(parsed, events=events)
-    live_html = build_live_status(events)
+    stage_html = build_stage_panel(parsed)
+    live_html = build_live_status(parsed)
     raw_json = json.dumps(run_data, indent=2) if run_data else ""
-    last_event_time = "—"
-    if events:
-        for ev in reversed(events):
-            rt = ev.get("runtime") or {}
-            if rt.get("updated_at"):
-                last_event_time = rt.get("updated_at")
-                break
+    runtime = parsed.get("runtime", {}) or {}
+    last_event_time = runtime.get("updated_at", "—")
     status_pill = "In progress"
     status_color = "#e2e8f0"
     status_text_color = "#0f172a"
-    if events and _is_completed(events):
+    if _is_completed(parsed):
         status_pill = "Completed"
         status_color = "#dcfce7"
         status_text_color = "#166534"
-    if events and any(ev.get("stage") == "cancelled" for ev in events if ev.get("type") == "status"):
+    if parsed.get("cancelled"):
         status_pill = "Cancelled"
         status_color = "#fee2e2"
         status_text_color = "#991b1b"
@@ -1226,8 +1047,7 @@ def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple
         run_json_path = _latest_run_json()
         run_data = _safe_read_json(run_json_path) if run_json_path else None
 
-    events = _load_events(run_json_path, run_dir=run_dir)
-    parsed = parse_run_data(run_data, events=events)
+    parsed = parse_run_data(run_data)
     report_type = (report_type or "txt").lower().strip()
 
     if report_type == "json":
@@ -1353,31 +1173,25 @@ def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFr
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
         return pd.DataFrame(columns=["iteration", "metric", "value"])
-    events = _load_events(run_dir / "dummy.json", run_dir=run_dir)
     rows: List[Dict[str, Any]] = []
-    by_iter: Dict[int, Dict[str, Any]] = {}
-    for ev in events:
-        pool = ev.get("pool_stats")
-        step = ev.get("step")
-        if not pool or step is None:
-            continue
-        try:
-            step = int(step)
-        except Exception:
-            continue
-        by_iter[step] = pool
-    for step, pool in sorted(by_iter.items()):
-        for metric, stats in (pool.get("metrics") or {}).items():
-            val = stats.get("median") if isinstance(stats, dict) else None
-            if val is None:
-                continue
-            rows.append({"iteration": step, "metric": metric, "value": val})
-    if rows:
-        return pd.DataFrame(rows)
-    # Fallback: use run.json if events are missing (e.g., uploaded JSON only)
+    mem = _load_memory(run_dir)
+    if mem:
+        pool_ids = _iteration_pool_ids(mem)
+        for idx, pool_id in enumerate(pool_ids, start=1):
+            pool_stats = _pool_stats_from_memory(mem, pool_id)
+            for metric, stats in (pool_stats.get("metrics") or {}).items():
+                if not isinstance(stats, dict):
+                    continue
+                val = stats.get("median")
+                if val is None:
+                    continue
+                rows.append({"iteration": idx, "metric": metric, "value": val})
+        if rows:
+            return pd.DataFrame(rows)
     run_json_path = Path(run_json_str) if run_json_str else _latest_run_json_in_dir(run_dir)
     run_data = _safe_read_json(run_json_path) if run_json_path and run_json_path.exists() else None
-    parsed = parse_run_data(run_data, events=None)
+    parsed = parse_run_data(run_data)
+    parsed = _enrich_parsed_with_memory(parsed, run_dir)
     for step in parsed.get("steps", []) or []:
         pool = step.get("pool_stats", {}) or {}
         metrics = pool.get("metrics", {}) or {}
@@ -1482,8 +1296,10 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
     df = block.get("data")
     if df is None or "SMILES" not in df.columns:
         return "SMILES not available.", "", ""
-    if mol_index < 0 or mol_index >= len(df):
-        return "Index out of range.", "", ""
+    if mol_index < 0:
+        mol_index = 0
+    if mol_index >= len(df):
+        mol_index = max(0, len(df) - 1)
     smiles = str(df.iloc[mol_index]["SMILES"])
     try:
         from rdkit import Chem
@@ -1663,6 +1479,52 @@ def _metrics_from_df(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _pool_stats_from_memory(mem, pool_id: str) -> Dict[str, Any]:
+    stats: Dict[str, Any] = {"pool": pool_id, "size": None, "diversity": None, "metrics": {}}
+    if not mem or not pool_id:
+        return stats
+    block = mem.stream.get(pool_id, {}) if getattr(mem, "stream", None) else {}
+    metrics = block.get("metrics") or {}
+    df = block.get("data") if isinstance(block, dict) else None
+
+    if isinstance(metrics, dict):
+        stats["size"] = metrics.get("size")
+        stats["diversity"] = metrics.get("diversity")
+        for key, val in metrics.items():
+            if isinstance(val, dict):
+                stats["metrics"][key] = {
+                    "min": val.get("min"),
+                    "max": val.get("max"),
+                    "median": val.get("median"),
+                }
+
+    if stats["size"] is None and isinstance(df, pd.DataFrame):
+        stats["size"] = len(df)
+
+    # If no metric dicts were present, compute from dataframe.
+    if (not stats["metrics"]) and isinstance(df, pd.DataFrame):
+        stats["metrics"] = _metrics_from_df(df).set_index("metric").to_dict(orient="index")
+
+    return stats
+
+
+def _enrich_parsed_with_memory(parsed: Dict[str, Any], run_dir: Optional[Path]) -> Dict[str, Any]:
+    if not run_dir:
+        return parsed
+    mem = _load_memory(run_dir)
+    if not mem:
+        return parsed
+    steps = parsed.get("steps", []) or []
+    for step in steps:
+        pool_id = step.get("action_output")
+        if not pool_id:
+            continue
+        step["pool_stats"] = _pool_stats_from_memory(mem, pool_id)
+    parsed["steps"] = steps
+    parsed["final_pool"] = steps[-1]["pool_stats"] if steps else {}
+    return parsed
+
+
 
 
 # ---------- UI ----------
@@ -1801,6 +1663,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[mol_table],
     )
     run_evt.then(
+        fn=_update_molecule_view,
+        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
+        outputs=[smiles_text, mol_svg, mol_status],
+    )
+    run_evt.then(
         fn=update_metric_controls,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends_state, metric_trends, metric_select],
@@ -1886,6 +1753,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
+    )
+    load_uploaded_button.click(
+        fn=_update_molecule_view,
+        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
+        outputs=[smiles_text, mol_svg, mol_status],
     )
     load_uploaded_button.click(
         fn=update_metric_controls,
