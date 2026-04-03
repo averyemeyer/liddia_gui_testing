@@ -979,8 +979,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
                     "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.stat().st_mtime)),
                 }
             )
-    run_history_df = pd.DataFrame(recent_rows, columns=["run", "json", "modified"])
-    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends_df, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge, run_history_df
+    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends_df, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge
 
 
 def _run_lock_path() -> Path:
@@ -1574,9 +1573,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 
         with gr.Tab("Results"):
             with gr.Row():
-                with gr.Column(scale=1):
-                    run_history = gr.Dataframe(label="Recent runs", interactive=False)
-            with gr.Row():
                 with gr.Column(scale=2):
                     overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
                     gr.Markdown("### Molecule viewer (2D)")
@@ -1594,7 +1590,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         color="metric",
                     )
                 with gr.Column(scale=1):
-                    runtime_md = gr.Markdown()
+                    runtime_md = gr.Markdown(visible=False)
                     report_status = gr.Textbox(label="Report status", interactive=False)
                     report_file = gr.File(label="Download report")
                     report_txt = gr.Button("Generate TXT")
@@ -1649,7 +1645,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     run_evt = run_button.click(
         fn=run_liddia,
         inputs=[target, max_iter, model, anthropic_api_key, skip_docking, extra_args],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge],
     )
     run_evt.then(
         fn=_update_metric_trends,
@@ -1680,7 +1676,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     refresh_button.click(
         fn=load_latest_run,
         inputs=[],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge],
     )
     refresh_button.click(
         fn=_update_metric_trends,
@@ -1696,7 +1692,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     load_uploaded_button.click(
         fn=load_uploaded_run,
         inputs=[uploaded_run],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge, run_history],
+        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge],
     )
     load_uploaded_button.click(
         fn=_update_metric_trends,
