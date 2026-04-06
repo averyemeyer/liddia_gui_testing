@@ -1,12 +1,10 @@
 import json
 import os
 import re
-import shlex
 import subprocess
 import threading
 import time
 from datetime import datetime
-from html import escape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -704,60 +702,22 @@ def build_results_markdown(parsed: Dict[str, Any]) -> str:
             lines.append(f"- {metric}: min {mn}, max {mx}, median {med}")
     return "\n".join(lines)
 
-def build_trace_html(parsed: Dict[str, Any]) -> str:
-    steps = parsed.get("steps", [])
-    if not steps:
-        return "<div style='padding:12px;border:1px solid #ddd;border-radius:8px;'>No iteration trace available yet.</div>"
-
-    cards: List[str] = []
-    for step in steps:
-        pool = step.get("pool_stats", {})
-        goal_eval = step.get("goal_eval", {})
-        answer = escape(goal_eval.get("answer") or "Unknown")
-        reason = escape(goal_eval.get("reason") or "No goal evaluation captured.")
-        action = escape(step.get("action_name") or "Unknown")
-        output = escape(str(step.get("action_output") or "Unknown"))
-        pool_id = escape(str(pool.get("pool") or "Unknown"))
-        size = escape(str(pool.get("size") or "—"))
-        diversity = escape(_fmt_num(pool.get("diversity")))
-        vina_min = escape(_fmt_num(_metric_value(pool, "Vina Score", "min")))
-        vina_max = escape(_fmt_num(_metric_value(pool, "Vina Score", "max")))
-
-        cards.append(
-            f"""
-            <div style='border:1px solid #ddd;border-left:6px solid #b00020;border-radius:10px;padding:14px;margin-bottom:12px;background:#fff;'>
-              <div style='font-size:18px;font-weight:700;margin-bottom:6px;'>Iteration {step['step']} — {action}</div>
-              <div style='margin-bottom:6px;'><b>Output:</b> {output}</div>
-              <div style='margin-bottom:6px;'><b>Goal check:</b> {answer}</div>
-              <div style='margin-bottom:10px;'><b>Reason:</b> {reason}</div>
-              <div><b>Pool:</b> {pool_id} &nbsp; | &nbsp; <b>Size:</b> {size} &nbsp; | &nbsp; <b>Diversity:</b> {diversity}</div>
-              <div><b>Vina range:</b> {vina_min} to {vina_max}</div>
-            </div>
-            """
-        )
-
-    return "\n".join(cards)
-
-
 def _build_summary(run_data: Dict[str, Any], run_json_path: Optional[Path]) -> str:
     parsed = parse_run_data(run_data)
     return build_run_overview(parsed, run_json_path)
 
 
 # ---------- run/load functions ----------
-def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_json_path: Optional[Path], logs_text: str, run_dir: Optional[Path] = None):
+def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_json_path: Optional[Path], run_dir: Optional[Path] = None):
     parsed = parse_run_data(run_data)
     parsed = _enrich_parsed_with_memory(parsed, run_dir)
     parsed["status_text"] = status_text
     summary = build_run_overview(parsed, run_json_path)
     progress_html = build_progress_html(parsed)
     runtime_md = build_runtime_markdown(parsed, run_json_path)
-    trace_md = build_timeline_markdown(parsed)
     results_md = build_results_markdown(parsed)
-    trace_html = build_trace_html(parsed)
     metrics_df = build_metrics_table(parsed)
     steps_df = build_step_table(parsed)
-    trend_html = "<div style='padding:12px;border:1px solid #ddd;border-radius:8px;'>Metric trends temporarily disabled.</div>"
     stage_html = build_stage_panel(parsed)
     live_html = build_live_status(parsed)
     raw_json = json.dumps(run_data, indent=2) if run_data else ""
@@ -788,20 +748,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
         f"<span style='color:#64748b;'>Last update: {last_event_time}</span>"
         "</div>"
     )
-    recent_rows = []
-    if LOG_ROOT.exists():
-        runs = [p for p in LOG_ROOT.iterdir() if p.is_dir()]
-        runs = sorted(runs, key=lambda p: p.stat().st_mtime, reverse=True)[:10]
-        for r in runs:
-            jsons = list(r.glob("*.json"))
-            recent_rows.append(
-                {
-                    "run": r.name,
-                    "json": jsons[0].name if jsons else "—",
-                    "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.stat().st_mtime)),
-                }
-            )
-    return status_text, summary, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends_fig, stage_html, live_html, raw_json, logs_text, run_dir_str, run_json_str, status_badge
+    return status_text, summary, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends_fig, stage_html, live_html, raw_json, run_dir_str, run_json_str, status_badge
 
 
 def _run_lock_path() -> Path:
@@ -833,8 +780,6 @@ def run_liddia(
     max_iter: int,
     model: str,
     anthropic_api_key: str,
-    skip_docking: bool,
-    extra_args: str,
 ) -> Tuple[Any, ...]:
     lock_path = _run_lock_path()
     if lock_path.exists():
@@ -845,20 +790,20 @@ def run_liddia(
         if info and not _pid_running(info.get("pid")):
             lock_path.unlink(missing_ok=True)
         else:
-            yield _render_outputs("Run already in progress. Cancel or wait.", None, None, "", run_dir=None)
+            yield _render_outputs("Run already in progress. Cancel or wait.", None, None, run_dir=None)
             return
     lock_path.write_text(json.dumps({"pid": None, "started_at": time.time()}))
 
     # Reset UI state for a fresh run
-    yield _render_outputs("Starting new run...", None, None, "", run_dir=None)
+    yield _render_outputs("Starting new run...", None, None, run_dir=None)
 
     if not RUN_PY.exists():
-        yield _render_outputs("run.py not found.", None, None, "")
+        yield _render_outputs("run.py not found.", None, None)
         lock_path.unlink(missing_ok=True)
         return
 
     if not anthropic_api_key or not anthropic_api_key.strip():
-        yield _render_outputs("Missing Anthropic API key.", None, None, "")
+        yield _render_outputs("Missing Anthropic API key.", None, None)
         lock_path.unlink(missing_ok=True)
         return
 
@@ -877,12 +822,6 @@ def run_liddia(
         model.strip(),
     ]
 
-    if skip_docking:
-        env["LIDDIA_SKIP_DOCKING"] = "1"
-
-    if extra_args and extra_args.strip():
-        cmd.extend(shlex.split(extra_args.strip()))
-
     try:
         process = subprocess.Popen(
             cmd,
@@ -894,7 +833,7 @@ def run_liddia(
             bufsize=1,
         )
     except Exception as e:
-        yield _render_outputs(f"Failed to start run: {e}", None, None, "")
+        yield _render_outputs(f"Failed to start run: {e}", None, None)
         lock_path.unlink(missing_ok=True)
         return
     # update lock with real pid
@@ -926,8 +865,7 @@ def run_liddia(
             break
         if time.time() - start_time > timeout_s:
             process.kill()
-            combined = f"--- STDOUT ---\n{''.join(stdout_buffer)}\n\n--- STDERR ---\n{''.join(stderr_buffer)}"
-            yield _render_outputs("Run timed out after 30 minutes.", None, None, combined, run_dir=active_run_dir)
+            yield _render_outputs("Run timed out after 30 minutes.", None, None, run_dir=active_run_dir)
             lock_path.unlink(missing_ok=True)
             return
 
@@ -935,17 +873,15 @@ def run_liddia(
             active_run_dir = _detect_new_run_dir(existing_dirs, start_time)
         run_json_path = _latest_run_json_in_dir(active_run_dir) if active_run_dir else None
         run_data = _safe_read_json(run_json_path) if run_json_path else None
-        combined = f"--- STDOUT ---\n{''.join(stdout_buffer)}\n\n--- STDERR ---\n{''.join(stderr_buffer)}"
         status_text = "Run in progress..."
         if active_run_dir is None:
             status_text = "Run started. Waiting for run artifacts..."
-        yield _render_outputs(status_text, run_data, run_json_path, combined, run_dir=active_run_dir)
+        yield _render_outputs(status_text, run_data, run_json_path, run_dir=active_run_dir)
         time.sleep(2)
 
     for t in threads:
         t.join(timeout=1)
 
-    combined = f"--- STDOUT ---\n{''.join(stdout_buffer)}\n\n--- STDERR ---\n{''.join(stderr_buffer)}"
     if active_run_dir is None:
         active_run_dir = _detect_new_run_dir(existing_dirs, start_time)
     run_json_path = _latest_run_json_in_dir(active_run_dir) if active_run_dir else _latest_run_json()
@@ -956,86 +892,41 @@ def run_liddia(
     else:
         status = f"Run failed with exit code {process.returncode}."
 
-    yield _render_outputs(status, run_data, run_json_path, combined, run_dir=active_run_dir)
+    yield _render_outputs(status, run_data, run_json_path, run_dir=active_run_dir)
     lock_path.unlink(missing_ok=True)
 
 
 def load_latest_run() -> Tuple[Any, ...]:
     run_json_path = _latest_run_json()
     if not run_json_path:
-        return _render_outputs("No runs found.", None, None, "")
+        return _render_outputs("No runs found.", None, None)
 
     run_data = _safe_read_json(run_json_path)
     if not run_data:
-        return _render_outputs(f"Could not read {run_json_path.name}.", None, run_json_path, "")
+        return _render_outputs(f"Could not read {run_json_path.name}.", None, run_json_path)
 
     status = f"Loaded latest run: {run_json_path.parent.name}"
-    return _render_outputs(status, run_data, run_json_path, "")
+    return _render_outputs(status, run_data, run_json_path)
 
 
 def load_uploaded_run(run_json_file) -> Tuple[Any, ...]:
     if run_json_file is None:
-        return _render_outputs("Upload a run JSON file first.", None, None, "")
+        return _render_outputs("Upload a run JSON file first.", None, None)
 
     path = Path(run_json_file.name)
     run_data = _safe_read_json(path)
     if not run_data:
-        return _render_outputs(f"Could not parse uploaded file: {path.name}", None, path, "")
+        return _render_outputs(f"Could not parse uploaded file: {path.name}", None, path)
 
-    return _render_outputs(f"Loaded uploaded run: {path.name}", run_data, path, "", run_dir=path.parent)
+    # If uploaded from outside log/, try to locate the matching run directory.
+    run_dir = path.parent if _is_under_log_root(path.parent) else _find_run_dir_by_json(path)
+    if run_dir:
+        log_json = run_dir / path.name
+        if log_json.exists():
+            path = log_json
+            run_data = _safe_read_json(path) or run_data
 
-
-def build_task_json(
-    target_name: str,
-    pocket_path: str,
-    drugs_csv: str,
-    requirements_text: str,
-    metrics_csv: str,
-    resource_budget: int,
-    model_name: str,
-) -> Tuple[str, str]:
-    if not target_name or not target_name.strip():
-        return "Missing target name.", ""
-    if not pocket_path or not pocket_path.strip():
-        return "Missing pocket path.", ""
-
-    drugs = [d.strip() for d in drugs_csv.split(",")] if drugs_csv else []
-    drugs = [d for d in drugs if d]
-    metrics = [m.strip() for m in metrics_csv.split(",")] if metrics_csv else []
-    metrics = [m for m in metrics if m]
-    requirements = [r.strip() for r in requirements_text.splitlines()] if requirements_text else []
-    requirements = [r for r in requirements if r]
-
-    try:
-        resource_int = int(resource_budget)
-    except Exception:
-        resource_int = 0
-
-    task = {
-        "target": target_name.strip(),
-        "pocket": pocket_path.strip(),
-        "drugs": drugs,
-        "requirements": requirements,
-        "metrics": metrics,
-        "resource": resource_int,
-        "model": model_name.strip(),
-    }
-
-    warnings: List[str] = []
-    if not drugs:
-        warnings.append("No seed/reference drugs provided.")
-    if not metrics:
-        warnings.append("No metrics provided.")
-    if not requirements:
-        warnings.append("No requirements provided.")
-    if pocket_path and not Path(pocket_path).exists():
-        warnings.append("Pocket path does not exist on this machine.")
-
-    status = "Task JSON built successfully."
-    if warnings:
-        status += " Warnings: " + " | ".join(warnings)
-
-    return status, json.dumps(task, indent=2)
+    return _render_outputs(f"Loaded uploaded run: {path.name}", run_data, path, run_dir=run_dir or path.parent)
 
 
 def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple[str, Optional[str]]:
@@ -1048,6 +939,7 @@ def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple
         run_data = _safe_read_json(run_json_path) if run_json_path else None
 
     parsed = parse_run_data(run_data)
+    parsed = _enrich_parsed_with_memory(parsed, run_dir or (run_json_path.parent if run_json_path else None))
     report_type = (report_type or "txt").lower().strip()
 
     if report_type == "json":
@@ -1392,29 +1284,29 @@ def build_pool_badge(run_dir_str: str, run_json_str: str, iteration: int) -> str
 def get_viewer_limits(run_dir_str: str, run_json_str: str):
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
-        return gr.update(minimum=1, maximum=1, value=1), gr.update(minimum=0, maximum=0, value=0)
+        return gr.update(value=1), gr.update(value=0)
     mem = _load_memory(run_dir)
     if not mem:
-        return gr.update(minimum=1, maximum=1, value=1), gr.update(minimum=0, maximum=0, value=0)
+        return gr.update(value=1), gr.update(value=0)
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
-        return gr.update(minimum=1, maximum=1, value=1), gr.update(minimum=0, maximum=0, value=0)
+        return gr.update(value=1), gr.update(value=0)
     max_iter = len(pool_ids)
     df = mem.stream.get(pool_ids[-1], {}).get("data")
     max_idx = max(0, len(df) - 1) if df is not None else 0
-    return gr.update(minimum=1, maximum=max_iter, value=min(1, max_iter)), gr.update(minimum=0, maximum=max_idx, value=0)
+    return gr.update(value=min(1, max_iter)), gr.update(value=0)
 
 
 def update_index_limits(run_dir_str: str, run_json_str: str, iteration: int):
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
-        return gr.update(minimum=0, maximum=0, value=0)
+        return gr.update(value=0)
     mem = _load_memory(run_dir)
     if not mem:
-        return gr.update(minimum=0, maximum=0, value=0)
+        return gr.update(value=0)
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
-        return gr.update(minimum=0, maximum=0, value=0)
+        return gr.update(value=0)
     if iteration < 1:
         iteration = 1
     if iteration > len(pool_ids):
@@ -1422,7 +1314,7 @@ def update_index_limits(run_dir_str: str, run_json_str: str, iteration: int):
     pool_id = pool_ids[iteration - 1]
     df = mem.stream.get(pool_id, {}).get("data")
     max_idx = max(0, len(df) - 1) if df is not None else 0
-    return gr.update(minimum=0, maximum=max_idx, value=0)
+    return gr.update(value=0 if max_idx >= 0 else 0)
 
 
 def _update_metric_trends(run_dir_str: str, run_json_str: str) -> pd.DataFrame:
@@ -1447,6 +1339,14 @@ def _find_run_dir_by_json(json_path: Path) -> Optional[Path]:
     return None
 
 
+def _is_under_log_root(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(LOG_ROOT.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def _resolve_run_dir(run_dir_str: str, run_json_str: str) -> Optional[Path]:
     if run_dir_str:
         run_dir = Path(run_dir_str)
@@ -1454,7 +1354,7 @@ def _resolve_run_dir(run_dir_str: str, run_json_str: str) -> Optional[Path]:
             return run_dir
     if run_json_str:
         json_path = Path(run_json_str)
-        if json_path.exists():
+        if json_path.exists() and _is_under_log_root(json_path.parent):
             return json_path.parent
         found = _find_run_dir_by_json(json_path)
         if found:
@@ -1479,6 +1379,20 @@ def _metrics_from_df(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _normalize_metric_label(label: str) -> str:
+    key = str(label).strip()
+    lowered = key.lower()
+    mapping = {
+        "vina": "Vina Score",
+        "vina score": "Vina Score",
+        "qed": "QED",
+        "sascore": "SAScore",
+        "lipinski": "Lipinski",
+        "novelty": "Novelty",
+    }
+    return mapping.get(lowered, key)
+
+
 def _pool_stats_from_memory(mem, pool_id: str) -> Dict[str, Any]:
     stats: Dict[str, Any] = {"pool": pool_id, "size": None, "diversity": None, "metrics": {}}
     if not mem or not pool_id:
@@ -1488,11 +1402,12 @@ def _pool_stats_from_memory(mem, pool_id: str) -> Dict[str, Any]:
     df = block.get("data") if isinstance(block, dict) else None
 
     if isinstance(metrics, dict):
-        stats["size"] = metrics.get("size")
-        stats["diversity"] = metrics.get("diversity")
+        stats["size"] = metrics.get("size") or metrics.get("Size")
+        stats["diversity"] = metrics.get("diversity") or metrics.get("Diversity")
         for key, val in metrics.items():
             if isinstance(val, dict):
-                stats["metrics"][key] = {
+                label = _normalize_metric_label(key)
+                stats["metrics"][label] = {
                     "min": val.get("min"),
                     "max": val.get("max"),
                     "median": val.get("median"),
@@ -1544,11 +1459,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     max_iter = gr.Number(value=2, precision=0, label="Max iterations")
                     model = gr.Dropdown(DEFAULT_MODELS, value="claude-opus-4-6", label="Model", allow_custom_value=True)
                     anthropic_api_key = gr.Textbox(label="Anthropic API key", type="password", placeholder="sk-ant-...")
-                    skip_docking = gr.Checkbox(value=False, label="Skip docking for prototype runs")
-                    extra_args = gr.Textbox(
-                        label="Extra CLI args",
-                        placeholder="Optional. Example: --env_dir ./env --drug_dir ./drugs",
-                    )
                     with gr.Row():
                         run_button = gr.Button("Run LIDDIA", variant="primary")
                         cancel_button = gr.Button("Cancel Run", variant="stop")
@@ -1567,80 +1477,59 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False)
 
         with gr.Tab("Results"):
-            with gr.Row():
-                with gr.Column(scale=2):
-                    overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
-                    gr.Markdown("### Molecule viewer (2D)")
-                    pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
-                    pool_badge = gr.HTML()
-                    iteration_select = gr.Number(label="Iteration", value=1, precision=0)
-                    mol_index = gr.Number(label="Molecule index", value=0, precision=0)
-                    smiles_text = gr.Textbox(label="SMILES", interactive=False)
-                    mol_svg = gr.HTML(label="2D structure")
-                    mol_status = gr.Textbox(label="Viewer status", interactive=False)
-                    mol_table = gr.Dataframe(label="Molecule properties", interactive=True)
-                    results_md = gr.Markdown()
-                    steps_df = gr.Dataframe(label="Iteration rollup", interactive=False)
-                    metric_trends_state = gr.State(pd.DataFrame())
-                    metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All")
-                    metric_trends = gr.Plot(label="Metric trends (median)")
-                with gr.Column(scale=1):
-                    runtime_md = gr.Markdown(visible=False)
-                    report_status = gr.Textbox(label="Report status", interactive=False)
-                    report_file = gr.File(label="Download report")
-                    report_txt = gr.Button("Generate TXT")
-                    report_json = gr.Button("Generate JSON")
-                    report_csv = gr.Button("Generate CSV")
-                    gr.Markdown("### Load previous run")
-                    uploaded_run = gr.File(label="Upload run JSON", file_types=[".json"])
-                    load_uploaded_button = gr.Button("Load uploaded run")
-
-            with gr.Accordion("Raw Outputs", open=False):
-                raw_json = gr.Code(label="Run JSON", language="json")
-                logs = gr.Textbox(label="CLI stdout/stderr", lines=20, interactive=False)
-                trace_html = gr.HTML(label="Agent trace")
-                trace_md = gr.Markdown()
-                trend_html = gr.HTML(label="Metric trends")
-
-            # Compare runs section removed for now
-
-        with gr.Tab("Task Builder"):
-            gr.Markdown("Build a LIDDIA task JSON from a guided form.")
-            with gr.Row():
-                with gr.Column(scale=1):
-                    tb_target = gr.Textbox(label="Target name", value="KIT")
-                    tb_pocket = gr.Textbox(label="Pocket path", placeholder="/absolute/or/relative/path/to/pocket.pdb")
-                    tb_drugs = gr.Textbox(
-                        label="Seed/reference drugs (comma-separated)",
-                        placeholder="imatinib, sunitinib",
-                    )
-                    tb_requirements = gr.Textbox(
-                        label="Requirements (one per line)",
-                        lines=8,
-                        value="High novelty\nGood docking score\nDrug-like properties",
-                    )
-                    tb_metrics = gr.Textbox(
-                        label="Metrics (comma-separated)",
-                        value="vina, novelty, lipinski, qed, sascore, diversity",
-                    )
-                    tb_resource = gr.Number(label="Resource budget", value=2, precision=0)
-                    tb_model = gr.Dropdown(DEFAULT_MODELS, value="claude-opus-4-6", label="Default model", allow_custom_value=True)
-                    tb_build = gr.Button("Build task JSON", variant="primary")
-
-                with gr.Column(scale=2):
-                    tb_status = gr.Textbox(label="Builder status", interactive=False)
-                    tb_json = gr.Code(label="Generated task JSON", language="json")
-
-            tb_build.click(
-                fn=build_task_json,
-                inputs=[tb_target, tb_pocket, tb_drugs, tb_requirements, tb_metrics, tb_resource, tb_model],
-                outputs=[tb_status, tb_json],
+            gr.HTML(
+                """
+<style>
+.results-tight .block {
+  margin-bottom: 6px !important;
+}
+.results-tight .gr-box {
+  margin-bottom: 6px !important;
+}
+</style>
+"""
             )
+            with gr.Column(elem_classes=["results-tight"]):
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
+                        runtime_md = gr.Markdown(visible=False)
+                        results_md = gr.Markdown()
+                        report_status = gr.Textbox(label="Report status", interactive=False)
+                        report_file = gr.File(label="Download report")
+                        report_txt = gr.Button("Generate TXT")
+                        report_json = gr.Button("Generate JSON")
+                        report_csv = gr.Button("Generate CSV")
+                        gr.Markdown("### Load previous run")
+                        uploaded_run = gr.File(label="Upload run JSON", file_types=[".json"])
+                        load_uploaded_button = gr.Button("Load uploaded run")
+
+                    with gr.Column(scale=2):
+                        gr.Markdown("### Molecule viewer (2D)")
+                        pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
+                        pool_badge = gr.HTML()
+                        iteration_select = gr.Number(label="Iteration", value=1, precision=0)
+                        mol_index = gr.Number(label="Molecule index", value=0, precision=0)
+                        smiles_text = gr.Textbox(label="SMILES", interactive=False)
+                        mol_svg = gr.HTML(label="2D structure")
+                        mol_status = gr.Textbox(label="Viewer status", interactive=False, visible=False)
+                        mol_table = gr.Dataframe(label="Molecule properties", interactive=True)
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        metric_trends_state = gr.State(pd.DataFrame())
+                        metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All")
+                        metric_trends = gr.Plot(label="Metric trends (median)")
+                    with gr.Column(scale=1):
+                        steps_df = gr.Dataframe(label="Iteration rollup", interactive=False)
+
+                with gr.Accordion("Run JSON", open=False):
+                    raw_json = gr.Code(label="Run JSON", language="json")
 
     run_evt = run_button.click(
         fn=run_liddia,
-        inputs=[target, max_iter, model, anthropic_api_key, skip_docking, extra_args],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge],
+        inputs=[target, max_iter, model, anthropic_api_key],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, raw_json, run_dir_state, run_json_state, status_badge],
     )
     run_evt.then(
         fn=_update_metric_trends,
@@ -1661,11 +1550,13 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
+        show_progress="hidden",
     )
     run_evt.then(
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
         outputs=[smiles_text, mol_svg, mol_status],
+        show_progress="hidden",
     )
     run_evt.then(
         fn=update_metric_controls,
@@ -1676,6 +1567,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=get_viewer_limits,
         inputs=[run_dir_state, run_json_state],
         outputs=[iteration_select, mol_index],
+        show_progress="hidden",
     )
 
     def cancel_run(run_dir_str: str) -> str:
@@ -1696,7 +1588,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     refresh_button.click(
         fn=load_latest_run,
         inputs=[],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, raw_json, run_dir_state, run_json_state, status_badge],
     )
     refresh_button.click(
         fn=_update_metric_trends,
@@ -1732,7 +1624,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     load_uploaded_button.click(
         fn=load_uploaded_run,
         inputs=[uploaded_run],
-        outputs=[status, overview, progress_html, runtime_md, trace_html, trace_md, results_md, metrics_df, steps_df, trend_html, metric_trends, stage_html, live_html, raw_json, logs, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, raw_json, run_dir_state, run_json_state, status_badge],
     )
     load_uploaded_button.click(
         fn=_update_metric_trends,
@@ -1753,11 +1645,13 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
+        show_progress="hidden",
     )
     load_uploaded_button.click(
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
         outputs=[smiles_text, mol_svg, mol_status],
+        show_progress="hidden",
     )
     load_uploaded_button.click(
         fn=update_metric_controls,
@@ -1794,12 +1688,14 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
         outputs=[smiles_text, mol_svg, mol_status],
+        show_progress="hidden",
     )
 
     iteration_select.change(
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
         outputs=[smiles_text, mol_svg, mol_status],
+        show_progress="hidden",
     )
     iteration_select.change(
         fn=build_pool_badge,
@@ -1810,16 +1706,19 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_table],
+        show_progress="hidden",
     )
     pool_select.change(
         fn=set_iteration_from_pool,
         inputs=[run_dir_state, run_json_state, pool_select],
         outputs=[iteration_select],
+        show_progress="hidden",
     )
     mol_table.select(
         fn=select_molecule_from_table,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_index, smiles_text, mol_svg, mol_status],
+        show_progress="hidden",
     )
     metric_select.change(
         fn=apply_metric_filter,
@@ -1830,6 +1729,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=update_index_limits,
         inputs=[run_dir_state, run_json_state, iteration_select],
         outputs=[mol_index],
+        show_progress="hidden",
     )
 
     mol_index.change(
