@@ -71,10 +71,6 @@ def _heartbeat(path_to_log: str, target: str, logger: Dict, start_time: float, s
         stop_event.wait(interval_s)
 
 
-def _cancel_requested(path_to_log: str) -> bool:
-    return os.path.exists(os.path.join(path_to_log, "cancel.flag"))
-
-
 def _build_pool_stats(mol_id: str, memory: Memory, metric_labels: Dict[str, str]) -> Dict:
     if mol_id not in memory.stream:
         return {}
@@ -183,13 +179,6 @@ def main(target: str = "ABCC8",
         heartbeat.start()
         for n_iter in pbar:
             step_display = n_iter + 1
-            if _cancel_requested(path_to_log):
-                logger["success"] = False
-                logger["cancelled"] = True
-                with runtime_lock:
-                    _update_runtime(logger, start_time, step_display, max_iter, end_time=datetime.now().isoformat())
-                    _write_run_snapshot(path_to_log, task["target"], logger)
-                break
             logger[n_iter] = {}
             with runtime_lock:
                 _update_runtime(logger, start_time, step_display, max_iter)

@@ -702,11 +702,6 @@ def build_results_markdown(parsed: Dict[str, Any]) -> str:
             lines.append(f"- {metric}: min {mn}, max {mx}, median {med}")
     return "\n".join(lines)
 
-def _build_summary(run_data: Dict[str, Any], run_json_path: Optional[Path]) -> str:
-    parsed = parse_run_data(run_data)
-    return build_run_overview(parsed, run_json_path)
-
-
 # ---------- run/load functions ----------
 def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_json_path: Optional[Path], run_dir: Optional[Path] = None):
     parsed = parse_run_data(run_data)
@@ -987,42 +982,6 @@ def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple
     return "Text report ready.", str(tmp_path)
 
 
-def _load_memory_df(run_dir: Path) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
-    mem_candidates = list(run_dir.glob("*_memory.pkl"))
-    if not mem_candidates:
-        return None, None
-    mem_path = sorted(mem_candidates, key=lambda p: p.stat().st_mtime)[-1]
-
-    class DummyMemory:
-        def __init__(self):
-            self.stream = {}
-            self.history = []
-
-    # Stub liddia modules referenced in pickle
-    liddia_mod = types.ModuleType("liddia")
-    liddia_mod.__path__ = []
-    submods = ["memory", "action", "environment", "evaluate", "utils", "prompt_template", "agent"]
-    for name in submods:
-        mod = types.ModuleType(f"liddia.{name}")
-        sys.modules[f"liddia.{name}"] = mod
-    sys.modules["liddia"] = liddia_mod
-    sys.modules["liddia.memory"].Memory = DummyMemory
-    for fn in ["sample_zinc", "graph_ga_optimizer", "run_code", "sample_pocket2mol"]:
-        setattr(sys.modules["liddia.action"], fn, lambda *a, **k: None)
-
-    with open(mem_path, "rb") as f:
-        mem = pickle.load(f)
-
-    mol_keys = [k for k, v in mem.stream.items() if isinstance(v, dict) and v.get("type") == "MOL"]
-    if not mol_keys:
-        return None, None
-    last_mol = mol_keys[-1]
-    df = mem.stream[last_mol].get("data")
-    if df is None or not isinstance(df, pd.DataFrame):
-        return None, None
-    return df, last_mol
-
-
 def _load_memory(run_dir: Path):
     mem_candidates = list(run_dir.glob("*_memory.pkl"))
     if not mem_candidates:
@@ -1150,23 +1109,6 @@ def update_metric_controls(run_dir_str: str, run_json_str: str):
 
 def apply_metric_filter(df: pd.DataFrame, metric: str):
     return build_metric_plot(filter_metric_trends(df, metric))
-
-
-def _viewer_limits(run_dir: Optional[Path]) -> Tuple[int, int]:
-    if not run_dir:
-        return 1, 0
-    mem = _load_memory(run_dir)
-    if not mem:
-        return 1, 0
-    pool_ids = _iteration_pool_ids(mem)
-    if not pool_ids:
-        return 1, 0
-    max_iter = len(pool_ids)
-    # default mol_index max based on last pool
-    df = mem.stream.get(pool_ids[-1], {}).get("data")
-    if df is None or not hasattr(df, "__len__"):
-        return max_iter, 0
-    return max_iter, max(0, len(df) - 1)
 
 
 def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int) -> Tuple[str, str, str]:
@@ -1461,7 +1403,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     anthropic_api_key = gr.Textbox(label="Anthropic API key", type="password", placeholder="sk-ant-...")
                     with gr.Row():
                         run_button = gr.Button("Run LIDDIA", variant="primary")
-                        cancel_button = gr.Button("Cancel Run", variant="stop")
                         refresh_button = gr.Button("Load latest run")
 
                 with gr.Column(scale=2):
@@ -1570,20 +1511,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         show_progress="hidden",
     )
 
-    def cancel_run(run_dir_str: str) -> str:
-        if not run_dir_str:
-            return "No active run directory found."
-        try:
-            Path(run_dir_str, "cancel.flag").write_text("cancelled")
-        except Exception as e:
-            return f"Failed to request cancel: {e}"
-        return "Cancellation requested. Waiting for run to stop..."
-
-    cancel_button.click(
-        fn=cancel_run,
-        inputs=[run_dir_state],
-        outputs=[status],
-    )
 
     refresh_button.click(
         fn=load_latest_run,
@@ -1756,4 +1683,5 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 
 
 if __name__ == "__main__":
+    demo.queue()
     demo.launch(inbrowser=True, theme=gr.themes.Soft())

@@ -2,23 +2,57 @@
 
 **Update: This repository is still in progress.**
 
+This repo now ships with a local Gradio GUI for launching and monitoring runs, plus a CLI for batch runs.
+
 # LIDDiA: Language-based Intelligent Drug Discovery Agent
 
 In our [paper](https://arxiv.org/abs/2502.13959), we introduce a LLM-based agent for drug discovery called `LIDDiA` (Language-based Intelligent Drug Discovery Agent). Using `LIDDiA`, you can specify what properties the molecules should have, and `LIDDiA` will run computational tools to generate and evaluate the molecules.
 
-## Quickstart
+## Quickstart (CLI)
 
 **Note: The current code for `LIDDiA` randomly sample molecules from TDC ZINC rather than using Pocket2Mol**
 
-The environment dependencies for `conda` is available in `environment.yml`. 
+The environment dependencies for `conda` are in `environment.yml`.
 
-You need to set up an Anthropic API key and put it in `my-anthropic-key.txt` to run the command.
+Set your Anthropic API key via environment variable (recommended):
+
+```console
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+You can also place the key in `my-anthropic-key.txt` (ignored by git).
 
 ```console
 python run.py --target EGFR --max_iter 10 --model "claude-3-5-sonnet-20241022"
 ```
 
 The argument for `--target` must be one of the targets in `dataset/pdb/`. The list of arguments for `--model` is available [here](https://docs.claude.com/en/docs/about-claude/models/overview).
+
+## Quickstart (GUI)
+
+Run the local GUI:
+
+```console
+python liddia_gradio_appv2_rewrite.py
+```
+
+The GUI:
+- launches runs and monitors progress
+- loads previous runs from `log/`
+- visualizes molecule pools and metrics
+
+Run artifacts are written to `log/<run_id>/`:
+- `<target>.json` (run metadata + iteration history)
+- `<target>_memory.pkl` (molecule pools + dataframe)
+
+## Setup
+
+Create the environment:
+
+```console
+conda env create -f environment.yml
+conda activate liddia
+```
 
 ## Citation
 

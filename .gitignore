@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+log/
+my-anthropic-key.txt
+dataset/.DS_Store
+*.pkl
