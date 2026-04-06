@@ -36,6 +36,14 @@ Run the local GUI:
 python liddia_gradio_appv2_rewrite.py
 ```
 
+You can also use the convenience launcher:
+
+```console
+./launch_liddiabrowser.command
+```
+
+Edit `launch_liddiabrowser.command` with your local paths (repo dir + conda env).
+
 The GUI:
 - launches runs and monitors progress
 - loads previous runs from `log/`
