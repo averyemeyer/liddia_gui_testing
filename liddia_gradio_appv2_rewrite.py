@@ -13,6 +13,7 @@ import pandas as pd
 import pickle
 import types
 import sys
+import math
 
 REPO_ROOT = Path(__file__).resolve().parent
 RUN_PY = REPO_ROOT / "run.py"
@@ -226,7 +227,7 @@ def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 payload.get("goal_response", ""),
             ]
         )
-        pool_stats = _parse_pool_stats(pool_text)
+        pool_stats = _format_pool_stats(_parse_pool_stats(pool_text))
         goal_eval = _parse_goal_check(payload.get("goal_response", ""))
 
         steps.append(
@@ -244,7 +245,7 @@ def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             }
         )
 
-    final_pool = steps[-1]["pool_stats"] if steps else {}
+    final_pool = _format_pool_stats(steps[-1]["pool_stats"]) if steps else {}
     return {
         "model": run_data.get("model"),
         "success": run_data.get("success") if "success" in run_data else None,
@@ -259,12 +260,105 @@ def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 # ---------- render helpers ----------
-def _fmt_num(value: Optional[float], digits: int = 2) -> str:
+def _fmt_num(value, decimals: int = 2):
     if value is None:
-        return "—"
-    if float(value).is_integer():
-        return str(int(value))
-    return f"{value:.{digits}f}"
+        return None
+    try:
+        num = float(value)
+    except Exception:
+        return value
+    factor = 10 ** int(decimals)
+    return math.trunc(num * factor) / factor
+
+def _fmt_str(value, decimals: int = 2) -> str:
+    try:
+        if value is None:
+            return "—"
+        if isinstance(value, (int, float)):
+            num = float(value)
+            factor = 10 ** int(decimals)
+            truncated = math.trunc(num * factor) / factor
+            return f"{truncated:.{decimals}f}"
+        s = str(value).strip()
+        # strip non-numeric chars (except . - e)
+        import re
+        s2 = re.sub(r"[^0-9eE+\-.]", "", s)
+        if s2 == "":
+            return s
+        num = float(s2)
+        factor = 10 ** int(decimals)
+        truncated = math.trunc(num * factor) / factor
+        return f"{truncated:.{decimals}f}"
+    except Exception:
+        return str(value)
+
+
+def _round_df(df: pd.DataFrame, decimals: int = 2) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    for col in df.columns:
+        try:
+            factor = 10 ** int(decimals)
+            # never coerce or modify SMILES column
+            if str(col).lower() == "smiles":
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].map(lambda x: (math.trunc(float(x) * factor) / factor) if pd.notna(x) else x)
+            else:
+                # only coerce object columns if ALL values are numeric-like
+                coerced = pd.to_numeric(df[col], errors='coerce')
+                if coerced.notna().all():
+                    df[col] = coerced.map(lambda x: (math.trunc(float(x) * factor) / factor) if pd.notna(x) else x)
+        except Exception:
+            pass
+    return df
+
+def _format_df_for_display(df: pd.DataFrame, decimals: int = 2) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    for col in df.columns:
+        try:
+            # preserve SMILES, Index, and step columns
+            if str(col).lower() in ["smiles", "index", "step"]:
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].map(lambda x: _fmt_str(x, decimals) if pd.notna(x) else x)
+            else:
+                coerced = pd.to_numeric(df[col], errors='coerce')
+                # only format columns where all values are numeric-like
+                if coerced.notna().all():
+                    df[col] = coerced.map(lambda x: _fmt_str(x, decimals) if pd.notna(x) else x)
+        except Exception:
+            pass
+    return df
+
+
+
+def _format_pool_stats(pool: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(pool, dict):
+        return pool
+    formatted = dict(pool)
+    if "diversity" in formatted:
+        formatted["diversity"] = _fmt_str(formatted.get("diversity"))
+    if "size" in formatted:
+        formatted["size"] = formatted.get("size")
+    metrics = formatted.get("metrics")
+    if isinstance(metrics, dict):
+        new_metrics = {}
+        for k, v in metrics.items():
+            if isinstance(v, dict):
+                new_metrics[k] = {
+                    "min": _fmt_str(v.get("min")),
+                    "max": _fmt_str(v.get("max")),
+                    "median": _fmt_str(v.get("median")),
+                }
+            else:
+                new_metrics[k] = _fmt_str(v)
+        formatted["metrics"] = new_metrics
+    return formatted
+
 
 
 def _metric_value(pool: Dict[str, Any], label: str, field: str) -> Optional[float]:
@@ -312,18 +406,18 @@ def build_run_overview(parsed: Dict[str, Any], run_json_path: Optional[Path]) ->
         lines.append("Final pool")
         lines.append(f"- Pool ID: {final_pool.get('pool') or 'Unknown'}")
         lines.append(f"- Molecules: {final_pool.get('size') or '—'}")
-        lines.append(f"- Diversity: {_fmt_num(final_pool.get('diversity'))}")
+        lines.append(f"- Diversity: {_fmt_str(final_pool.get('diversity'))}")
         lines.append(
-            f"- Vina range: {_fmt_num(_metric_value(final_pool, 'Vina Score', 'min'))} to {_fmt_num(_metric_value(final_pool, 'Vina Score', 'max'))}"
+            f"- Vina range: {_fmt_str(_metric_value(final_pool, 'Vina Score', 'min'))} to {_fmt_str(_metric_value(final_pool, 'Vina Score', 'max'))}"
         )
         lines.append(
-            f"- Novelty range: {_fmt_num(_metric_value(final_pool, 'Novelty', 'min'))} to {_fmt_num(_metric_value(final_pool, 'Novelty', 'max'))}"
+            f"- Novelty range: {_fmt_str(_metric_value(final_pool, 'Novelty', 'min'))} to {_fmt_str(_metric_value(final_pool, 'Novelty', 'max'))}"
         )
         lines.append(
-            f"- QED range: {_fmt_num(_metric_value(final_pool, 'QED', 'min'))} to {_fmt_num(_metric_value(final_pool, 'QED', 'max'))}"
+            f"- QED range: {_fmt_str(_metric_value(final_pool, 'QED', 'min'))} to {_fmt_str(_metric_value(final_pool, 'QED', 'max'))}"
         )
         lines.append(
-            f"- SAScore range: {_fmt_num(_metric_value(final_pool, 'SAScore', 'min'))} to {_fmt_num(_metric_value(final_pool, 'SAScore', 'max'))}"
+            f"- SAScore range: {_fmt_str(_metric_value(final_pool, 'SAScore', 'min'))} to {_fmt_str(_metric_value(final_pool, 'SAScore', 'max'))}"
         )
 
     if parsed.get("error_message"):
@@ -387,7 +481,6 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
             "<div style='background:#f1f5f9;border-radius:8px;height:12px;overflow:hidden;'>"
             "<div style='height:12px;width:40%;background:#94a3b8;animation:pulse 1.2s ease-in-out infinite;'></div>"
             "</div>"
-            "<style>@keyframes pulse{0%{margin-left:0;}50%{margin-left:60%;}100%{margin-left:0;}}</style>"
             "</div>"
         )
     effective_max = max_iter
@@ -430,7 +523,6 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
         "<div style='background:#f1f5f9;border-radius:8px;height:12px;overflow:hidden;'>"
         f"<div style='height:12px;width:{percent}%;{bar_style}'></div>"
         "</div></div>"
-        "<style>@keyframes flow{0%{background-position:0% 50%;}100%{background-position:200% 50%;}}</style>"
     )
 
 
@@ -562,7 +654,6 @@ def build_stage_panel(parsed: Dict[str, Any]) -> str:
                 "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;animation:pulseDot 1.4s ease-in-out infinite;'></span>"
                 "Starting run…</div>"
                 "<div style='color:#64748b;'>Waiting for first status update.</div>"
-                "<style>@keyframes pulseDot{0%{transform:scale(0.8);opacity:0.5;}50%{transform:scale(1.2);opacity:1;}100%{transform:scale(0.8);opacity:0.5;}}</style>"
                 "</div>"
             )
         return "<div style='padding:12px;border:1px solid #e5e7eb;border-radius:8px;'>No run yet. Click <b>Run LIDDiA</b> to start.</div>"
@@ -583,8 +674,6 @@ def build_stage_panel(parsed: Dict[str, Any]) -> str:
             "</div>"
             f"<div style='margin-bottom:6px;'>Action: {action_label}</div>"
             f"<div>Iteration: {latest_step.get('step') if latest_step.get('step') is not None else '—'}</div>"
-            "<style>@keyframes pulseDot{0%{transform:scale(0.8);opacity:0.5;}50%{transform:scale(1.2);opacity:1;}100%{transform:scale(0.8);opacity:0.5;}}"
-            "@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>"
             "</div>"
         )
 
@@ -612,7 +701,6 @@ def build_live_status(parsed: Dict[str, Any]) -> str:
         f"<div style='font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;'>Live status {status_spinner}</div>"
         f"<div style='margin-bottom:6px;' title='Action = current action for this iteration.'>Action: {action_label}</div>"
         f"<div>Iteration: {latest_step.get('step') if latest_step.get('step') is not None else '—'}</div>"
-        "<style>@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>"
         "</div>"
     )
 
@@ -653,14 +741,14 @@ def build_step_table(parsed: Dict[str, Any]) -> pd.DataFrame:
         vina = metrics.get("Vina Score") or metrics.get("vina")
         novelty = metrics.get("Novelty") or metrics.get("novelty")
         if isinstance(vina, dict):
-            row["vina_min"] = vina.get("min")
-            row["vina_max"] = vina.get("max")
+            row["vina_min"] = _fmt_str(vina.get("min"))
+            row["vina_max"] = _fmt_str(vina.get("max"))
         if isinstance(novelty, dict):
-            row["novelty_min"] = novelty.get("min")
-            row["novelty_max"] = novelty.get("max")
+            row["novelty_min"] = _fmt_str(novelty.get("min"))
+            row["novelty_max"] = _fmt_str(novelty.get("max"))
         rows.append(row)
     cols = ["step", "action", "output_pool", "goal_check", "pool_size", "diversity", "vina_min", "vina_max", "novelty_min", "novelty_max"]
-    return pd.DataFrame(rows, columns=cols)
+    return _format_df_for_display(_round_df(pd.DataFrame(rows, columns=cols)))
 
 def build_metrics_table(parsed: Dict[str, Any]) -> pd.DataFrame:
     final_pool = parsed.get("final_pool", {}) or {}
@@ -670,16 +758,16 @@ def build_metrics_table(parsed: Dict[str, Any]) -> pd.DataFrame:
     if "size" in final_pool:
         rows.append({"metric": "Size", "min": final_pool.get("size"), "max": final_pool.get("size"), "median": None})
     if "diversity" in final_pool:
-        rows.append({"metric": "Diversity", "min": final_pool.get("diversity"), "max": final_pool.get("diversity"), "median": final_pool.get("diversity")})
+        rows.append({"metric": "Diversity", "min": _fmt_str(final_pool.get("diversity")), "max": _fmt_str(final_pool.get("diversity")), "median": _fmt_str(final_pool.get("diversity"))})
     for metric, stats in metrics.items():
         if isinstance(stats, dict):
             rows.append({
                 "metric": metric,
-                "min": stats.get("min"),
-                "max": stats.get("max"),
-                "median": stats.get("median"),
+                "min": _fmt_str(stats.get("min")),
+                "max": _fmt_str(stats.get("max")),
+                "median": _fmt_str(stats.get("median")),
             })
-    return pd.DataFrame(rows, columns=["metric", "min", "max", "median"])
+    return _format_df_for_display(_round_df(pd.DataFrame(rows, columns=["metric", "min", "max", "median"])))
 
 def build_results_markdown(parsed: Dict[str, Any]) -> str:
     final_pool = parsed.get("final_pool", {}) or {}
@@ -692,14 +780,14 @@ def build_results_markdown(parsed: Dict[str, Any]) -> str:
     lines.append(f"- Pool: {pool_id}")
     lines.append(f"- Molecules: {size}")
     if diversity is not None:
-        lines.append(f"- Diversity: {diversity:.2f}")
+        lines.append(f"- Diversity: {_fmt_str(diversity)}")
     metrics = final_pool.get("metrics") or {}
     for metric, stats in metrics.items():
         if isinstance(stats, dict):
             mn = stats.get("min")
             mx = stats.get("max")
             med = stats.get("median")
-            lines.append(f"- {metric}: min {mn}, max {mx}, median {med}")
+            lines.append(f"- {metric}: min {_fmt_str(mn)}, max {_fmt_str(mx)}, median {_fmt_str(med)}")
     return "\n".join(lines)
 
 # ---------- run/load functions ----------
@@ -715,7 +803,6 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
     steps_df = build_step_table(parsed)
     stage_html = build_stage_panel(parsed)
     live_html = build_live_status(parsed)
-    raw_json = json.dumps(run_data, indent=2) if run_data else ""
     runtime = parsed.get("runtime", {}) or {}
     last_event_time = runtime.get("updated_at", "—")
     status_pill = "In progress"
@@ -743,7 +830,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
         f"<span style='color:#64748b;'>Last update: {last_event_time}</span>"
         "</div>"
     )
-    return status_text, summary, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends_fig, stage_html, live_html, raw_json, run_dir_str, run_json_str, status_badge
+    return status_text, summary, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends_fig, stage_html, live_html, run_dir_str, run_json_str, status_badge
 
 
 def _run_lock_path() -> Path:
@@ -1068,7 +1155,7 @@ def filter_metric_trends(df: pd.DataFrame, metric: str) -> pd.DataFrame:
         out = df[df["metric"] == metric].copy()
     out["iteration"] = pd.to_numeric(out["iteration"], errors="coerce").fillna(0).astype(int)
     out["value"] = pd.to_numeric(out["value"], errors="coerce")
-    return out.sort_values("iteration")
+    return _format_df_for_display(out, decimals=2).sort_values("iteration")
 
 
 def build_metric_plot(df: pd.DataFrame):
@@ -1121,11 +1208,12 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
         return "No molecule pools found.", "", ""
-    if iteration <= 0:
-        iteration = 1
-    if iteration > len(pool_ids):
-        iteration = len(pool_ids)
-    pool_id = pool_ids[iteration - 1]
+    # iteration is 0-based index
+    if iteration < 0:
+        iteration = 0
+    if iteration >= len(pool_ids):
+        iteration = max(0, len(pool_ids) - 1)
+    pool_id = pool_ids[iteration]
     block = mem.stream.get(pool_id, {})
     df = block.get("data")
     if df is None or "SMILES" not in df.columns:
@@ -1158,29 +1246,60 @@ def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, ma
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
         return pd.DataFrame()
-    if iteration <= 0:
-        iteration = 1
-    if iteration > len(pool_ids):
-        iteration = len(pool_ids)
-    pool_id = pool_ids[iteration - 1]
+    # iteration is 0-based index
+    if iteration < 0:
+        iteration = 0
+    if iteration >= len(pool_ids):
+        iteration = max(0, len(pool_ids) - 1)
+    pool_id = pool_ids[iteration]
     df = mem.stream.get(pool_id, {}).get("data")
     if df is None or not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
     # Keep SMILES + numeric properties
     cols = [c for c in df.columns]
     out = df[cols].copy()
+    # Add index column
+    out.insert(0, "Index", range(len(out)))
     if max_rows and len(out) > max_rows:
         out = out.head(max_rows)
-    return out
+    return _format_df_for_display(out, decimals=2)
 
 
 def select_molecule_from_table(run_dir_str: str, run_json_str: str, iteration: int, evt: gr.SelectData):
     # evt.index is row index in displayed table
     idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
     if idx is None:
-        return gr.update(), "", "", ""
+        return 0, "", "", ""
     smiles, svg, status = build_molecule_view(run_dir_str, run_json_str, int(iteration), int(idx))
-    return gr.update(value=idx), smiles, svg, status
+    return idx, smiles, svg, status
+
+
+def download_current_pool_csv(run_dir_str: str, run_json_str: str, iteration: int):
+    from pathlib import Path
+    run_dir = Path(run_dir_str)
+    pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
+    if not pool_ids or iteration >= len(pool_ids):
+        return None
+    pool_id = pool_ids[iteration]
+    df = build_molecule_table(run_dir_str, run_json_str, iteration, max_rows=None)
+    csv_path = run_dir / f"{pool_id}.csv"
+    df.to_csv(csv_path, index=False)
+    return str(csv_path)
+
+
+def download_all_pools_csv(run_dir_str: str, run_json_str: str):
+    import zipfile
+    from pathlib import Path
+    run_dir = Path(run_dir_str)
+    pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
+    zip_path = run_dir / "all_pools.zip"
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        for i, pool_id in enumerate(pool_ids):
+            df = build_molecule_table(run_dir_str, run_json_str, i, max_rows=None)
+            csv_path = run_dir / f"{pool_id}.csv"
+            df.to_csv(csv_path, index=False)
+            zf.write(csv_path, f"{pool_id}.csv")
+    return str(zip_path)
 
 
 def _pool_ids_for_run(run_dir_str: str, run_json_str: str) -> List[str]:
@@ -1196,29 +1315,31 @@ def _pool_ids_for_run(run_dir_str: str, run_json_str: str) -> List[str]:
 def update_pool_selector(run_dir_str: str, run_json_str: str):
     pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
     if not pool_ids:
-        return gr.update(choices=[], value=None), gr.update(value=1)
-    return gr.update(choices=pool_ids, value=pool_ids[-1]), gr.update(value=len(pool_ids))
+        return gr.update(choices=[], value=None), gr.update(value=0)
+    # set selector to last pool and iteration to last index (0-based)
+    return gr.update(choices=pool_ids, value=pool_ids[-1]), gr.update(value=max(0, len(pool_ids) - 1))
 
 
 def set_iteration_from_pool(run_dir_str: str, run_json_str: str, pool_id: str):
     pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
     if not pool_ids or pool_id not in pool_ids:
-        return gr.update()
-    return gr.update(value=pool_ids.index(pool_id) + 1)
+        return 0
+    return pool_ids.index(pool_id)
 
 
-def build_pool_badge(run_dir_str: str, run_json_str: str, iteration: int) -> str:
+def build_pool_badge(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int) -> str:
     pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
     if not pool_ids:
         return "<div style='padding:8px 10px;border:1px solid #e5e7eb;border-radius:999px;display:inline-block;'>Viewing: —</div>"
-    if iteration < 1:
-        iteration = 1
-    if iteration > len(pool_ids):
-        iteration = len(pool_ids)
-    pool_id = pool_ids[iteration - 1]
+    # iteration is 0-based index
+    if iteration < 0:
+        iteration = 0
+    if iteration >= len(pool_ids):
+        iteration = max(0, len(pool_ids) - 1)
+    pool_id = pool_ids[iteration]
     return (
         "<div style='padding:8px 12px;border:1px solid #e5e7eb;border-radius:999px;display:inline-block;background:#f8fafc;'>"
-        f"<b>Viewing</b>: Iteration {iteration} · Pool {pool_id}"
+        f"<b>Viewing</b>: Iteration {iteration} · Pool {pool_id} · Molecule Index {mol_index}"
         "</div>"
     )
 
@@ -1226,17 +1347,18 @@ def build_pool_badge(run_dir_str: str, run_json_str: str, iteration: int) -> str
 def get_viewer_limits(run_dir_str: str, run_json_str: str):
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
-        return gr.update(value=1), gr.update(value=0)
+        return 0, 0
     mem = _load_memory(run_dir)
     if not mem:
-        return gr.update(value=1), gr.update(value=0)
+        return 0, 0
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
-        return gr.update(value=1), gr.update(value=0)
+        return 0, 0
     max_iter = len(pool_ids)
     df = mem.stream.get(pool_ids[-1], {}).get("data")
     max_idx = max(0, len(df) - 1) if df is not None else 0
-    return gr.update(value=min(1, max_iter)), gr.update(value=0)
+    # default to iteration 0 (0-based)
+    return 0, 0
 
 
 def update_index_limits(run_dir_str: str, run_json_str: str, iteration: int):
@@ -1249,11 +1371,12 @@ def update_index_limits(run_dir_str: str, run_json_str: str, iteration: int):
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
         return gr.update(value=0)
-    if iteration < 1:
-        iteration = 1
-    if iteration > len(pool_ids):
-        iteration = len(pool_ids)
-    pool_id = pool_ids[iteration - 1]
+    # iteration is 0-based index
+    if iteration < 0:
+        iteration = 0
+    if iteration >= len(pool_ids):
+        iteration = max(0, len(pool_ids) - 1)
+    pool_id = pool_ids[iteration]
     df = mem.stream.get(pool_id, {}).get("data")
     max_idx = max(0, len(df) - 1) if df is not None else 0
     return gr.update(value=0 if max_idx >= 0 else 0)
@@ -1376,7 +1499,9 @@ def _enrich_parsed_with_memory(parsed: Dict[str, Any], run_dir: Optional[Path]) 
         pool_id = step.get("action_output")
         if not pool_id:
             continue
-        step["pool_stats"] = _pool_stats_from_memory(mem, pool_id)
+        # pull stats from memory and ensure they're formatted for display
+        raw_stats = _pool_stats_from_memory(mem, pool_id)
+        step["pool_stats"] = _format_pool_stats(raw_stats)
     parsed["steps"] = steps
     parsed["final_pool"] = steps[-1]["pool_stats"] if steps else {}
     return parsed
@@ -1395,6 +1520,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         with gr.Tab("Monitor"):
             run_dir_state = gr.State("")
             run_json_state = gr.State("")
+            iteration_select_state = gr.State(0)
+            mol_index_state = gr.State(0)
             with gr.Row():
                 with gr.Column(scale=1):
                     target = gr.Dropdown(DEFAULT_TARGETS, value="EGFR", label="Target", allow_custom_value=True)
@@ -1421,12 +1548,9 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
             gr.HTML(
                 """
 <style>
-.results-tight .block {
-  margin-bottom: 6px !important;
-}
-.results-tight .gr-box {
-  margin-bottom: 6px !important;
-}
+.resizable-table { overflow-x: auto; }
+.resizable-table table { table-layout: auto; width: 100%; }
+.resizable-table th, .resizable-table td { white-space: nowrap; }
 </style>
 """
             )
@@ -1439,7 +1563,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         report_status = gr.Textbox(label="Report status", interactive=False)
                         report_file = gr.File(label="Download report")
                         report_txt = gr.Button("Generate TXT")
-                        report_json = gr.Button("Generate JSON")
                         report_csv = gr.Button("Generate CSV")
                         gr.Markdown("### Load previous run")
                         uploaded_run = gr.File(label="Upload run JSON", file_types=[".json"])
@@ -1449,12 +1572,14 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         gr.Markdown("### Molecule viewer (2D)")
                         pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
                         pool_badge = gr.HTML()
-                        iteration_select = gr.Number(label="Iteration", value=1, precision=0)
-                        mol_index = gr.Number(label="Molecule index", value=0, precision=0)
                         smiles_text = gr.Textbox(label="SMILES", interactive=False)
                         mol_svg = gr.HTML(label="2D structure")
                         mol_status = gr.Textbox(label="Viewer status", interactive=False, visible=False)
-                        mol_table = gr.Dataframe(label="Molecule properties", interactive=True)
+                        with gr.Row():
+                            gr.Markdown("#### Molecule properties")
+                            download_current = gr.DownloadButton("📥 Download current pool", variant="secondary", size="sm")
+                            download_all = gr.DownloadButton("📦 Download all molecule property sets", variant="secondary", size="sm")
+                        mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table"])
 
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -1462,15 +1587,12 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All")
                         metric_trends = gr.Plot(label="Metric trends (median)")
                     with gr.Column(scale=1):
-                        steps_df = gr.Dataframe(label="Iteration rollup", interactive=False)
-
-                with gr.Accordion("Run JSON", open=False):
-                    raw_json = gr.Code(label="Run JSON", language="json")
+                        steps_df = gr.Dataframe(label="Iteration rollup", interactive=False, elem_classes=["resizable-table"])
 
     run_evt = run_button.click(
         fn=run_liddia,
         inputs=[target, max_iter, model, anthropic_api_key],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, raw_json, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
     run_evt.then(
         fn=_update_metric_trends,
@@ -1480,22 +1602,22 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     run_evt.then(
         fn=update_pool_selector,
         inputs=[run_dir_state, run_json_state],
-        outputs=[pool_select, iteration_select],
+        outputs=[pool_select, iteration_select_state],
     )
     run_evt.then(
         fn=build_pool_badge,
-        inputs=[run_dir_state, run_json_state, iteration_select],
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[pool_badge],
     )
     run_evt.then(
         fn=_update_molecule_table,
-        inputs=[run_dir_state, run_json_state, iteration_select],
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
         outputs=[mol_table],
         show_progress="hidden",
     )
     run_evt.then(
         fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[smiles_text, mol_svg, mol_status],
         show_progress="hidden",
     )
@@ -1503,19 +1625,13 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=update_metric_controls,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends_state, metric_trends, metric_select],
-    )
-    run_evt.then(
-        fn=get_viewer_limits,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[iteration_select, mol_index],
-        show_progress="hidden",
     )
 
 
     refresh_button.click(
         fn=load_latest_run,
         inputs=[],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, raw_json, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
     refresh_button.click(
         fn=_update_metric_trends,
@@ -1525,16 +1641,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     refresh_button.click(
         fn=update_pool_selector,
         inputs=[run_dir_state, run_json_state],
-        outputs=[pool_select, iteration_select],
+        outputs=[pool_select, iteration_select_state],
     )
     refresh_button.click(
         fn=build_pool_badge,
-        inputs=[run_dir_state, run_json_state, iteration_select],
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[pool_badge],
     )
     refresh_button.click(
         fn=_update_molecule_table,
-        inputs=[run_dir_state, run_json_state, iteration_select],
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
         outputs=[mol_table],
     )
     refresh_button.click(
@@ -1542,16 +1658,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends_state, metric_trends, metric_select],
     )
-    refresh_button.click(
-        fn=get_viewer_limits,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[iteration_select, mol_index],
-    )
 
     load_uploaded_button.click(
         fn=load_uploaded_run,
         inputs=[uploaded_run],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, raw_json, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
     load_uploaded_button.click(
         fn=_update_metric_trends,
@@ -1561,22 +1672,22 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     load_uploaded_button.click(
         fn=update_pool_selector,
         inputs=[run_dir_state, run_json_state],
-        outputs=[pool_select, iteration_select],
+        outputs=[pool_select, iteration_select_state],
     )
     load_uploaded_button.click(
         fn=build_pool_badge,
-        inputs=[run_dir_state, run_json_state, iteration_select],
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[pool_badge],
     )
     load_uploaded_button.click(
         fn=_update_molecule_table,
-        inputs=[run_dir_state, run_json_state, iteration_select],
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
         outputs=[mol_table],
         show_progress="hidden",
     )
     load_uploaded_button.click(
         fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[smiles_text, mol_svg, mol_status],
         show_progress="hidden",
     )
@@ -1584,11 +1695,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=update_metric_controls,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends_state, metric_trends, metric_select],
-    )
-    load_uploaded_button.click(
-        fn=get_viewer_limits,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[iteration_select, mol_index],
     )
 
     elapsed_timer.tick(
@@ -1613,66 +1719,57 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 
     refresh_button.click(
         fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[smiles_text, mol_svg, mol_status],
         show_progress="hidden",
     )
 
-    iteration_select.change(
-        fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
-        outputs=[smiles_text, mol_svg, mol_status],
-        show_progress="hidden",
-    )
-    iteration_select.change(
-        fn=build_pool_badge,
-        inputs=[run_dir_state, run_json_state, iteration_select],
-        outputs=[pool_badge],
-    )
-    iteration_select.change(
-        fn=_update_molecule_table,
-        inputs=[run_dir_state, run_json_state, iteration_select],
-        outputs=[mol_table],
-        show_progress="hidden",
-    )
     pool_select.change(
         fn=set_iteration_from_pool,
         inputs=[run_dir_state, run_json_state, pool_select],
-        outputs=[iteration_select],
+        outputs=[iteration_select_state],
+        show_progress="hidden",
+    ).then(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
+        outputs=[pool_badge],
+        show_progress="hidden",
+    ).then(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
+        outputs=[mol_table],
         show_progress="hidden",
     )
     mol_table.select(
         fn=select_molecule_from_table,
-        inputs=[run_dir_state, run_json_state, iteration_select],
-        outputs=[mol_index, smiles_text, mol_svg, mol_status],
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
+        outputs=[mol_index_state, smiles_text, mol_svg, mol_status],
         show_progress="hidden",
+    ).then(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
+        outputs=[pool_badge],
+        show_progress="hidden",
+    )
+    download_current.click(
+        fn=download_current_pool_csv,
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
+        outputs=[download_current],
+    )
+    download_all.click(
+        fn=download_all_pools_csv,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[download_all],
     )
     metric_select.change(
         fn=apply_metric_filter,
         inputs=[metric_trends_state, metric_select],
         outputs=[metric_trends],
     )
-    iteration_select.change(
-        fn=update_index_limits,
-        inputs=[run_dir_state, run_json_state, iteration_select],
-        outputs=[mol_index],
-        show_progress="hidden",
-    )
-
-    mol_index.change(
-        fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select, mol_index],
-        outputs=[smiles_text, mol_svg, mol_status],
-    )
 
     report_txt.click(
         fn=build_report,
         inputs=[run_dir_state, run_json_state, gr.State("txt")],
-        outputs=[report_status, report_file],
-    )
-    report_json.click(
-        fn=build_report,
-        inputs=[run_dir_state, run_json_state, gr.State("json")],
         outputs=[report_status, report_file],
     )
     report_csv.click(
