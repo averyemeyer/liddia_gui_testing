@@ -89,6 +89,18 @@ def _latest_run_json_in_dir(run_dir: Optional[Path]) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
+def _get_available_runs() -> List[str]:
+    if not LOG_ROOT.exists():
+        return []
+    runs = []
+    for child in LOG_ROOT.iterdir():
+        if child.is_dir():
+            json_files = list(child.glob("*.json"))
+            if json_files:
+                runs.append(child.name)
+    return sorted(runs, reverse=True)  # most recent first
+
+
 def _detect_new_run_dir(existing_dirs: set, started_at: float) -> Optional[Path]:
     if not LOG_ROOT.exists():
         return None
@@ -366,67 +378,41 @@ def _metric_value(pool: Dict[str, Any], label: str, field: str) -> Optional[floa
 
 
 def build_run_overview(parsed: Dict[str, Any], run_json_path: Optional[Path]) -> str:
-    task = parsed.get("task", {})
-    final_pool = parsed.get("final_pool", {})
-    lines: List[str] = []
+    task = parsed.get("task", {}) or {}
+    runtime = parsed.get("runtime", {}) or {}
 
-    has_real_data = bool(task.get("target") or parsed.get("model") or parsed.get("step_count"))
-    if not has_real_data:
-        return "Run overview will appear once a run has produced results."
-
-    status = "IN PROGRESS"
-    if parsed.get("success") is True:
-        status = "SUCCESS"
-    elif parsed.get("success") is False:
-        status = "COMPLETED"
-    if parsed.get("cancelled"):
-        status = "CANCELLED"
-    if parsed.get("error_message"):
-        status = "FAILED"
+    lines = []
+    status = "SUCCESS" if parsed.get("success") else ("CANCELLED" if parsed.get("cancelled") else "RUNNING")
     lines.append(f"Status: {status}")
-    lines.append(f"Target: {task.get('target', 'Unknown')}")
-    lines.append(f"Model: {parsed.get('model') or 'Unknown'}")
-    lines.append(f"Iterations executed: {parsed.get('step_count', 0)}")
-    if run_json_path:
-        lines.append(f"Run JSON: {run_json_path}")
-    if task.get("pocket"):
-        lines.append(f"Pocket: {task.get('pocket')}")
+    if task.get("target"):
+        lines.append(f"Target: {task.get('target')}")
+    if parsed.get("model"):
+        lines.append(f"Model: {parsed.get('model')}")
     if task.get("resource") is not None:
         lines.append(f"Resource budget: {task.get('resource')}")
+    if task.get("pocket"):
+        lines.append(f"Pocket: {task.get('pocket')}")
+    if run_json_path:
+        lines.append(f"Run JSON: {run_json_path}")
+    if runtime.get("start_time"):
+        lines.append(f"Start: {runtime.get('start_time')}")
+    if runtime.get("end_time"):
+        lines.append(f"End: {runtime.get('end_time')}")
+    if runtime.get("elapsed_seconds") is not None:
+        elapsed = float(runtime.get("elapsed_seconds") or 0.0)
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        lines.append(f"Runtime: {minutes}m {seconds}s")
 
-    metrics = task.get("metrics")
-    if metrics:
-        if isinstance(metrics, dict):
-            lines.append("Task metrics: " + ", ".join(metrics.keys()))
-        elif isinstance(metrics, list):
-            lines.append("Task metrics: " + ", ".join(str(m) for m in metrics))
-
+    final_pool = parsed.get("final_pool", {}) or {}
     if final_pool:
-        lines.append("")
+        pool_id = final_pool.get("pool") or "Unknown"
+        size = final_pool.get("size") or "—"
         lines.append("Final pool")
-        lines.append(f"- Pool ID: {final_pool.get('pool') or 'Unknown'}")
-        lines.append(f"- Molecules: {final_pool.get('size') or '—'}")
-        lines.append(f"- Diversity: {_fmt_str(final_pool.get('diversity'))}")
-        lines.append(
-            f"- Vina range: {_fmt_str(_metric_value(final_pool, 'Vina Score', 'min'))} to {_fmt_str(_metric_value(final_pool, 'Vina Score', 'max'))}"
-        )
-        lines.append(
-            f"- Novelty range: {_fmt_str(_metric_value(final_pool, 'Novelty', 'min'))} to {_fmt_str(_metric_value(final_pool, 'Novelty', 'max'))}"
-        )
-        lines.append(
-            f"- QED range: {_fmt_str(_metric_value(final_pool, 'QED', 'min'))} to {_fmt_str(_metric_value(final_pool, 'QED', 'max'))}"
-        )
-        lines.append(
-            f"- SAScore range: {_fmt_str(_metric_value(final_pool, 'SAScore', 'min'))} to {_fmt_str(_metric_value(final_pool, 'SAScore', 'max'))}"
-        )
-
-    if parsed.get("error_message"):
-        lines.append("")
-        lines.append("Error")
-        lines.append(str(parsed["error_message"]))
+        lines.append(f"- Pool ID: {pool_id}")
+        lines.append(f"- Molecules: {size}")
 
     return "\n".join(lines)
-
 
 
 def build_runtime_markdown(parsed: Dict[str, Any], run_json_path: Optional[Path]) -> str:
@@ -726,6 +712,12 @@ def build_timeline_markdown(parsed: Dict[str, Any]) -> str:
 
 def build_step_table(parsed: Dict[str, Any]) -> pd.DataFrame:
     rows = []
+    all_metrics = set()
+    for step in parsed.get("steps", []) or []:
+        pool = step.get("pool_stats", {}) or {}
+        metrics = pool.get("metrics", {}) or {}
+        all_metrics.update(metrics.keys())
+    
     for step in parsed.get("steps", []) or []:
         pool = step.get("pool_stats", {}) or {}
         metrics = pool.get("metrics", {}) or {}
@@ -737,17 +729,14 @@ def build_step_table(parsed: Dict[str, Any]) -> pd.DataFrame:
             "pool_size": pool.get("size"),
             "diversity": pool.get("diversity"),
         }
-        # include a couple metric mins/maxs if present
-        vina = metrics.get("Vina Score") or metrics.get("vina")
-        novelty = metrics.get("Novelty") or metrics.get("novelty")
-        if isinstance(vina, dict):
-            row["vina_min"] = _fmt_str(vina.get("min"))
-            row["vina_max"] = _fmt_str(vina.get("max"))
-        if isinstance(novelty, dict):
-            row["novelty_min"] = _fmt_str(novelty.get("min"))
-            row["novelty_max"] = _fmt_str(novelty.get("max"))
+        # include metric mins/maxs for all available metrics
+        for metric_name in sorted(all_metrics):
+            metric_data = metrics.get(metric_name)
+            if isinstance(metric_data, dict):
+                row[f"{metric_name.lower().replace(' ', '_')}_min"] = _fmt_str(metric_data.get("min"))
+                row[f"{metric_name.lower().replace(' ', '_')}_max"] = _fmt_str(metric_data.get("max"))
         rows.append(row)
-    cols = ["step", "action", "output_pool", "goal_check", "pool_size", "diversity", "vina_min", "vina_max", "novelty_min", "novelty_max"]
+    cols = ["step", "action", "output_pool", "goal_check", "pool_size", "diversity"] + [f"{m.lower().replace(' ', '_')}_min" for m in sorted(all_metrics)] + [f"{m.lower().replace(' ', '_')}_max" for m in sorted(all_metrics)]
     return _format_df_for_display(_round_df(pd.DataFrame(rows, columns=cols)))
 
 def build_metrics_table(parsed: Dict[str, Any]) -> pd.DataFrame:
@@ -991,6 +980,27 @@ def load_latest_run() -> Tuple[Any, ...]:
     return _render_outputs(status, run_data, run_json_path)
 
 
+def load_selected_run(run_folder: str) -> Tuple[Any, ...]:
+    if not run_folder:
+        return _render_outputs("No run selected.", None, None)
+
+    run_dir = LOG_ROOT / run_folder
+    if not run_dir.exists() or not run_dir.is_dir():
+        return _render_outputs(f"Run folder not found: {run_folder}", None, None)
+
+    json_files = list(run_dir.glob("*.json"))
+    if not json_files:
+        return _render_outputs(f"No JSON file found in {run_folder}", None, None)
+
+    run_json_path = sorted(json_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+    run_data = _safe_read_json(run_json_path)
+    if not run_data:
+        return _render_outputs(f"Could not read {run_json_path.name}.", None, run_json_path)
+
+    status = f"Loaded run: {run_folder}"
+    return _render_outputs(status, run_data, run_json_path, run_dir)
+
+
 def load_uploaded_run(run_json_file) -> Tuple[Any, ...]:
     if run_json_file is None:
         return _render_outputs("Upload a run JSON file first.", None, None)
@@ -1107,6 +1117,14 @@ def _iteration_pool_ids(mem) -> List[str]:
     return pool_ids
 
 
+
+
+def _metric_choices(run_dir_str: str, run_json_str: str) -> list[str]:
+    df = build_metric_trend_df(run_dir_str, run_json_str)
+    if df is None or df.empty or "metric" not in df.columns:
+        return ["All"]
+    metrics = sorted(set(df["metric"].dropna().astype(str).tolist()))
+    return ["All"] + metrics
 def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFrame:
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
@@ -1116,7 +1134,7 @@ def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFr
     if mem:
         pool_ids = _iteration_pool_ids(mem)
         for idx, pool_id in enumerate(pool_ids, start=1):
-            pool_stats = _pool_stats_from_memory(mem, pool_id)
+            pool_stats = _pool_stats_from_memory(mem, pool_id, run_dir)
             for metric, stats in (pool_stats.get("metrics") or {}).items():
                 if not isinstance(stats, dict):
                     continue
@@ -1149,13 +1167,16 @@ def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFr
 def filter_metric_trends(df: pd.DataFrame, metric: str) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["iteration", "metric", "value"])
+    df = df.copy()
+    df["metric"] = df["metric"].astype(str)
+    metric = str(metric) if metric is not None else "All"
     if not metric or metric == "All":
         out = df.copy()
     else:
         out = df[df["metric"] == metric].copy()
     out["iteration"] = pd.to_numeric(out["iteration"], errors="coerce").fillna(0).astype(int)
-    out["value"] = pd.to_numeric(out["value"], errors="coerce")
-    return _format_df_for_display(out, decimals=2).sort_values("iteration")
+    out["value"] = pd.to_numeric(out["value"], errors="coerce").round(2)
+    return out.sort_values("iteration")
 
 
 def build_metric_plot(df: pd.DataFrame):
@@ -1435,7 +1456,7 @@ def _metrics_from_df(df: pd.DataFrame) -> pd.DataFrame:
         series = pd.to_numeric(df[col], errors="coerce")
         rows.append(
             {
-                "metric": col,
+                "metric": _normalize_metric_label(col),
                 "min": float(series.min()),
                 "max": float(series.max()),
                 "median": float(series.median()),
@@ -1458,32 +1479,31 @@ def _normalize_metric_label(label: str) -> str:
     return mapping.get(lowered, key)
 
 
-def _pool_stats_from_memory(mem, pool_id: str) -> Dict[str, Any]:
+def _pool_stats_from_memory(mem, pool_id: str, run_dir: Optional[Path] = None) -> Dict[str, Any]:
     stats: Dict[str, Any] = {"pool": pool_id, "size": None, "diversity": None, "metrics": {}}
     if not mem or not pool_id:
         return stats
     block = mem.stream.get(pool_id, {}) if getattr(mem, "stream", None) else {}
     metrics = block.get("metrics") or {}
-    df = block.get("data") if isinstance(block, dict) else None
+    df = None  # Load from CSV only if memory metrics are missing
 
     if isinstance(metrics, dict):
         stats["size"] = metrics.get("size") or metrics.get("Size")
         stats["diversity"] = metrics.get("diversity") or metrics.get("Diversity")
-        for key, val in metrics.items():
-            if isinstance(val, dict):
-                label = _normalize_metric_label(key)
-                stats["metrics"][label] = {
-                    "min": val.get("min"),
-                    "max": val.get("max"),
-                    "median": val.get("median"),
-                }
+        # Use memory metrics as primary source
+        stats["metrics"] = {k: v for k, v in metrics.items() if k not in ["size", "Size", "diversity", "Diversity"]}
 
-    if stats["size"] is None and isinstance(df, pd.DataFrame):
-        stats["size"] = len(df)
-
-    # If no metric dicts were present, compute from dataframe.
-    if (not stats["metrics"]) and isinstance(df, pd.DataFrame):
-        stats["metrics"] = _metrics_from_df(df).set_index("metric").to_dict(orient="index")
+    # Only compute from CSV if memory doesn't have metrics
+    if not stats["metrics"] and run_dir:
+        csv_path = run_dir / f"{pool_id}.csv"
+        if csv_path.exists():
+            try:
+                df = pd.read_csv(csv_path)
+                stats["metrics"] = _metrics_from_df(df).set_index("metric").to_dict(orient="index")
+                if stats["size"] is None:
+                    stats["size"] = len(df)
+            except Exception:
+                pass
 
     return stats
 
@@ -1499,9 +1519,14 @@ def _enrich_parsed_with_memory(parsed: Dict[str, Any], run_dir: Optional[Path]) 
         pool_id = step.get("action_output")
         if not pool_id:
             continue
-        # pull stats from memory and ensure they're formatted for display
-        raw_stats = _pool_stats_from_memory(mem, pool_id)
-        step["pool_stats"] = _format_pool_stats(raw_stats)
+        # pull stats from memory and merge with existing parsed stats
+        raw_stats = _pool_stats_from_memory(mem, pool_id, run_dir)
+        existing_stats = step.get("pool_stats", {})
+        # Merge: prefer memory stats, but keep parsed metrics if memory doesn't have them
+        merged_stats = {**existing_stats, **raw_stats}
+        if not raw_stats.get("metrics") and existing_stats.get("metrics"):
+            merged_stats["metrics"] = existing_stats["metrics"]
+        step["pool_stats"] = _format_pool_stats(merged_stats)
     parsed["steps"] = steps
     parsed["final_pool"] = steps[-1]["pool_stats"] if steps else {}
     return parsed
@@ -1565,8 +1590,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         report_txt = gr.Button("Generate TXT")
                         report_csv = gr.Button("Generate CSV")
                         gr.Markdown("### Load previous run")
-                        uploaded_run = gr.File(label="Upload run JSON", file_types=[".json"])
-                        load_uploaded_button = gr.Button("Load uploaded run")
+                        run_selector = gr.Dropdown(choices=_get_available_runs(), label="Select run folder", value=None)
+                        load_selected_button = gr.Button("Load selected run")
 
                     with gr.Column(scale=2):
                         gr.Markdown("### Molecule viewer (2D)")
@@ -1581,13 +1606,14 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                             download_all = gr.DownloadButton("📦 Download all molecule property sets", variant="secondary", size="sm")
                         mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table"])
 
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        metric_trends_state = gr.State(pd.DataFrame())
-                        metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All")
-                        metric_trends = gr.Plot(label="Metric trends (median)")
-                    with gr.Column(scale=1):
-                        steps_df = gr.Dataframe(label="Iteration rollup", interactive=False, elem_classes=["resizable-table"])
+        with gr.Tab("Trends"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    metric_trends_state = gr.State(pd.DataFrame())
+                    metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All", allow_custom_value=True)
+                    metric_trends = gr.Plot(label="Metric trends (median)")
+                with gr.Column(scale=1):
+                    steps_df = gr.Dataframe(label="Iteration rollup", interactive=False, elem_classes=["resizable-table"])
 
     run_evt = run_button.click(
         fn=run_liddia,
@@ -1595,6 +1621,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
     run_evt.then(
+        fn=_metric_choices,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_select],
+    )
+    run_evt.then(
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
@@ -1628,70 +1659,32 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     )
 
 
-    refresh_button.click(
+    refresh_evt = refresh_button.click(
         fn=load_latest_run,
         inputs=[],
         outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
-    refresh_button.click(
+    refresh_evt.then(
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
     )
-    refresh_button.click(
+    refresh_evt.then(
         fn=update_pool_selector,
         inputs=[run_dir_state, run_json_state],
         outputs=[pool_select, iteration_select_state],
     )
-    refresh_button.click(
+    refresh_evt.then(
         fn=build_pool_badge,
         inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[pool_badge],
     )
-    refresh_button.click(
+    refresh_evt.then(
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select_state],
         outputs=[mol_table],
     )
-    refresh_button.click(
-        fn=update_metric_controls,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[metric_trends_state, metric_trends, metric_select],
-    )
-
-    load_uploaded_button.click(
-        fn=load_uploaded_run,
-        inputs=[uploaded_run],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
-    )
-    load_uploaded_button.click(
-        fn=_update_metric_trends,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[metric_trends],
-    )
-    load_uploaded_button.click(
-        fn=update_pool_selector,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[pool_select, iteration_select_state],
-    )
-    load_uploaded_button.click(
-        fn=build_pool_badge,
-        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
-        outputs=[pool_badge],
-    )
-    load_uploaded_button.click(
-        fn=_update_molecule_table,
-        inputs=[run_dir_state, run_json_state, iteration_select_state],
-        outputs=[mol_table],
-        show_progress="hidden",
-    )
-    load_uploaded_button.click(
-        fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
-        outputs=[smiles_text, mol_svg, mol_status],
-        show_progress="hidden",
-    )
-    load_uploaded_button.click(
+    refresh_evt.then(
         fn=update_metric_controls,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends_state, metric_trends, metric_select],
@@ -1711,10 +1704,42 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
 
-    load_uploaded_button.click(
+    load_selected_button.click(
+        fn=load_selected_run,
+        inputs=[run_selector],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
+    )
+    load_selected_button.click(
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
+    )
+    load_selected_button.click(
+        fn=update_pool_selector,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[pool_select, iteration_select_state],
+    )
+    load_selected_button.click(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
+        outputs=[pool_badge],
+    )
+    load_selected_button.click(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
+        outputs=[mol_table],
+        show_progress="hidden",
+    )
+    load_selected_button.click(
+        fn=_update_molecule_view,
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
+        outputs=[smiles_text, mol_svg, mol_status],
+        show_progress="hidden",
+    )
+    load_selected_button.click(
+        fn=update_metric_controls,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends_state, metric_trends, metric_select],
     )
 
     refresh_button.click(
