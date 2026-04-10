@@ -219,6 +219,7 @@ def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             "success": None,
             "cancelled": None,
             "error_message": None,
+            "stop_reason": None,
             "task": {},
             "runtime": {},
             "steps": [],
@@ -255,6 +256,8 @@ def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 "input_prompt": payload.get("input_prompt", ""),
                 "input_goal_prompt": payload.get("input_goal_prompt", ""),
                 "goal_response": payload.get("goal_response", ""),
+                "error_message": payload.get("error_message"),
+                "stop_reason": payload.get("stop_reason"),
                 "pool_stats": pool_stats,
                 "goal_eval": goal_eval,
             }
@@ -266,6 +269,7 @@ def parse_run_data(run_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "success": run_data.get("success") if "success" in run_data else None,
         "cancelled": run_data.get("cancelled", False),
         "error_message": run_data.get("error_message"),
+        "stop_reason": run_data.get("stop_reason"),
         "task": run_data.get("task", {}) if isinstance(run_data.get("task"), dict) else {},
         "runtime": run_data.get("runtime", {}) if isinstance(run_data.get("runtime"), dict) else {},
         "steps": steps,
@@ -365,7 +369,7 @@ def _smiles_to_markdown_image(smiles: str) -> str:
         b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
         src = f"data:image/png;base64,{b64}"
         return (
-            f"<a class='mol-thumb-link' href='{src}' target='_blank' rel='noopener noreferrer' title='Click to open full-size image'>"
+            f"<a class='mol-thumb-link' href='{src}' target='_blank' rel='noopener noreferrer'>"
             f"<img class='mol-thumb' src='{src}' alt='molecule'/>"
             "</a>"
         )
@@ -598,6 +602,27 @@ def _is_completed(parsed: Dict[str, Any]) -> bool:
 def _action_label(action_name: Optional[str]) -> str:
     return action_name or "—"
 
+
+def _get_stop_reason(parsed: Dict[str, Any]) -> Optional[str]:
+    error_message = parsed.get("error_message")
+    if error_message:
+        first = str(error_message).strip().splitlines()[0]
+        return f"Failed: {first}"
+
+    stop_reason = parsed.get("stop_reason")
+    if stop_reason:
+        return str(stop_reason)
+
+    for step in reversed(parsed.get("steps", []) or []):
+        step_error = step.get("error_message")
+        if step_error:
+            first = str(step_error).strip().splitlines()[0]
+            return f"Failed: {first}"
+        step_reason = step.get("stop_reason")
+        if step_reason:
+            return str(step_reason)
+    return None
+
 def build_action_timeline(parsed: Dict[str, Any]) -> str:
     steps = parsed.get("steps", []) or []
     if not steps:
@@ -689,7 +714,17 @@ def build_stage_panel(parsed: Dict[str, Any]) -> str:
             "</div>"
         )
 
-    return build_action_timeline(parsed)
+    timeline_html = build_action_timeline(parsed)
+    reason = _get_stop_reason(parsed)
+    if not reason:
+        return timeline_html
+    return (
+        timeline_html
+        + "<div style='margin-top:10px;border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff;'>"
+        + "<div style='font-weight:700;margin-bottom:4px;'>Stop/Fail reason</div>"
+        + f"<div style='color:#334155;'>{reason}</div>"
+        + "</div>"
+    )
 
 
 def build_live_status(parsed: Dict[str, Any]) -> str:
@@ -708,11 +743,21 @@ def build_live_status(parsed: Dict[str, Any]) -> str:
     status_spinner = ""
     if running:
         status_spinner = "<span style='display:inline-block;width:10px;height:10px;border:2px solid #cbd5f5;border-top-color:#6366f1;border-radius:50%;animation:spin 0.9s linear infinite;'></span>"
+    reason = _get_stop_reason(parsed)
+    reason_html = ""
+    if reason:
+        reason_html = (
+            "<div style='margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb;'>"
+            "<div style='font-weight:600;margin-bottom:2px;'>Stop/Fail reason</div>"
+            f"<div style='color:#334155;'>{reason}</div>"
+            "</div>"
+        )
     return (
         "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;'>"
         f"<div style='font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;'>Live status {status_spinner}</div>"
         f"<div style='margin-bottom:6px;' title='Action = current action for this iteration.'>Action: {action_label}</div>"
         f"<div>Iteration: {latest_step.get('step') if latest_step.get('step') is not None else '—'}</div>"
+        f"{reason_html}"
         "</div>"
     )
 
@@ -845,7 +890,7 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
         f"<span style='color:#64748b;'>Last update: {last_event_time}</span>"
         "</div>"
     )
-    return status_text, summary, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends_fig, stage_html, live_html, run_dir_str, run_json_str, status_badge
+    return status_text, summary, progress_html, runtime_md, results_md, metrics_df, summary, steps_df, metric_trends_fig, stage_html, live_html, run_dir_str, run_json_str, status_badge
 
 
 def _run_lock_path() -> Path:
@@ -1159,7 +1204,7 @@ def build_metric_trend_df(run_dir_str: str, run_json_str: str = "") -> pd.DataFr
     mem = _load_memory(run_dir)
     if mem:
         pool_ids = _iteration_pool_ids(mem)
-        for idx, pool_id in enumerate(pool_ids, start=1):
+        for idx, pool_id in enumerate(pool_ids):
             pool_stats = _pool_stats_from_memory(mem, pool_id, run_dir)
             for metric, stats in (pool_stats.get("metrics") or {}).items():
                 if not isinstance(stats, dict):
@@ -1245,16 +1290,16 @@ def apply_metric_filter(df: pd.DataFrame, metric: str):
     return build_metric_plot(filter_metric_trends(df, metric))
 
 
-def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int) -> Tuple[str, str, str]:
+def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int) -> Tuple[str, str]:
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
-        return "No run selected.", "", ""
+        return "No run selected.", ""
     mem = _load_memory(run_dir)
     if not mem:
-        return "No memory.pkl found.", "", ""
+        return "No memory.pkl found.", ""
     pool_ids = _iteration_pool_ids(mem)
     if not pool_ids:
-        return "No molecule pools found.", "", ""
+        return "No molecule pools found.", ""
     # iteration is 0-based index
     if iteration < 0:
         iteration = 0
@@ -1264,7 +1309,7 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
     block = mem.stream.get(pool_id, {})
     df = block.get("data")
     if df is None or "SMILES" not in df.columns:
-        return "SMILES not available.", "", ""
+        return "SMILES not available.", ""
     if mol_index < 0:
         mol_index = 0
     if mol_index >= len(df):
@@ -1275,23 +1320,23 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
         from rdkit.Chem import Draw
         mol = Chem.MolFromSmiles(smiles)
         if not mol:
-            return smiles, "<div>Could not parse SMILES.</div>", ""
+            return smiles, "<div>Could not parse SMILES.</div>"
         svg = Draw.MolsToGridImage([mol], molsPerRow=1, subImgSize=(250, 200), useSVG=True)
         # Make the main viewer image clickable to open full-size in a new tab.
         svg_url = "data:image/svg+xml;utf8," + urllib.parse.quote(str(svg))
         html = (
             "<div>"
-            f"<a href='{svg_url}' target='_blank' rel='noopener noreferrer' title='Open full-size image'>"
+            f"<a href='{svg_url}' target='_blank' rel='noopener noreferrer'>"
             f"{svg}"
             "</a>"
             "</div>"
         )
-        return smiles, html, ""
+        return smiles, html
     except Exception as e:
-        return smiles, "<div>2D viewer requires RDKit.</div>", str(e)
+        return smiles, f"<div>2D viewer requires RDKit.</div><div style='color:#9ca3af;font-size:12px;'>{e}</div>"
 
 
-def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, max_rows: int = 50) -> pd.DataFrame:
+def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, max_rows: Optional[int] = None) -> pd.DataFrame:
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
         return pd.DataFrame()
@@ -1322,7 +1367,7 @@ def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, ma
     lead_cols = ["Index", "Molecule"]
     remaining_cols = [c for c in out.columns if c not in lead_cols]
     out = out[lead_cols + remaining_cols]
-    if max_rows and len(out) > max_rows:
+    if max_rows is not None and max_rows > 0 and len(out) > max_rows:
         out = out.head(max_rows)
     return _format_df_for_display(out, decimals=2)
 
@@ -1331,9 +1376,9 @@ def select_molecule_from_table(run_dir_str: str, run_json_str: str, iteration: i
     # evt.index is row index in displayed table
     idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
     if idx is None:
-        return 0, "", "", ""
-    smiles, svg, status = build_molecule_view(run_dir_str, run_json_str, int(iteration), int(idx))
-    return idx, smiles, svg, status
+        return 0, "", ""
+    smiles, svg = build_molecule_view(run_dir_str, run_json_str, int(iteration), int(idx))
+    return idx, smiles, svg
 
 
 def download_current_pool_csv(run_dir_str: str, run_json_str: str, iteration: int):
@@ -1390,6 +1435,18 @@ def update_pool_selector(run_dir_str: str, run_json_str: str):
         return gr.update(choices=[], value=None), gr.update(value=0)
     # set selector to last pool and iteration to last index (0-based)
     return gr.update(choices=pool_ids, value=pool_ids[-1]), gr.update(value=max(0, len(pool_ids) - 1))
+
+
+def reset_molecule_viewer_state():
+    return (
+        gr.update(choices=[], value=None),  # pool_select
+        gr.update(value=0),  # iteration_select_state
+        gr.update(value=0),  # mol_index_state
+        "<div style='padding:8px 10px;border:1px solid #e5e7eb;border-radius:999px;display:inline-block;'>Viewing: —</div>",  # pool_badge
+        gr.update(value=pd.DataFrame()),  # mol_table
+        gr.update(value=""),  # smiles_text
+        gr.update(value=""),  # mol_svg
+    )
 
 
 def set_iteration_from_pool(run_dir_str: str, run_json_str: str, pool_id: str):
@@ -1625,6 +1682,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 
                 with gr.Column(scale=1):
                     metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False)
+                    monitor_overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
 
         with gr.Tab("Results"):
             gr.HTML(
@@ -1633,6 +1691,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 .resizable-table { overflow-x: auto; }
 .resizable-table table { table-layout: fixed; width: 100%; }
 .resizable-table th, .resizable-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.resizable-table th { position: relative; overflow: visible; }
 /* Keep index and molecule columns compact so property columns stay visible */
 .resizable-table table th:nth-child(1),
 .resizable-table table td:nth-child(1) { width: 60px; }
@@ -1643,10 +1702,12 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
   max-width: 260px !important;
   overflow: visible !important;
   pointer-events: auto !important;
-  font-size: 0; /* prevent long markdown/data-uri text from expanding column */
-  line-height: 0;
   position: relative;
   z-index: 1;
+}
+.resizable-table table td:nth-child(2) {
+  font-size: 0; /* prevent long markdown/data-uri text from expanding column */
+  line-height: 0;
 }
 .resizable-table table td:nth-child(2) img {
   width: 240px !important;
@@ -1676,6 +1737,44 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 }
 .resizable-table .mol-thumb-link:hover {
   z-index: 10000;
+}
+/* Header tooltip placeholders for molecule property metrics */
+.resizable-table table th:nth-child(3),
+.resizable-table table th:nth-child(4),
+.resizable-table table th:nth-child(5),
+.resizable-table table th:nth-child(6),
+.resizable-table table th:nth-child(7) {
+  cursor: help;
+}
+.resizable-table table th:nth-child(3)::after,
+.resizable-table table th:nth-child(4)::after,
+.resizable-table table th:nth-child(5)::after,
+.resizable-table table th:nth-child(6)::after,
+.resizable-table table th:nth-child(7)::after {
+  content: "Definition placeholder.";
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 20000;
+  background: #111827;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+.resizable-table table th:nth-child(3):hover::after,
+.resizable-table table th:nth-child(4):hover::after,
+.resizable-table table th:nth-child(5):hover::after,
+.resizable-table table th:nth-child(6):hover::after,
+.resizable-table table th:nth-child(7):hover::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 /* Keep report download output compact when empty */
 #report-file-output,
@@ -1714,7 +1813,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table"])
                         smiles_text = gr.Textbox(label="SMILES", interactive=False)
                         mol_svg = gr.HTML(label="2D structure")
-                        mol_status = gr.Textbox(label="Viewer status", interactive=False, visible=False)
 
         with gr.Tab("Trends"):
             with gr.Row():
@@ -1725,10 +1823,17 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 with gr.Column(scale=1):
                     steps_df = gr.Dataframe(label="Iteration rollup", interactive=False, elem_classes=["resizable-table"])
 
+    run_button.click(
+        fn=reset_molecule_viewer_state,
+        inputs=[],
+        outputs=[pool_select, iteration_select_state, mol_index_state, pool_badge, mol_table, smiles_text, mol_svg],
+        queue=False,
+    )
+
     run_evt = run_button.click(
         fn=run_liddia,
         inputs=[target, max_iter, model, anthropic_api_key],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, monitor_overview, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
     run_evt.then(
         fn=_metric_choices,
@@ -1759,7 +1864,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     run_evt.then(
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
-        outputs=[smiles_text, mol_svg, mol_status],
+        outputs=[smiles_text, mol_svg],
         show_progress="hidden",
     )
     run_evt.then(
@@ -1772,7 +1877,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     refresh_evt = refresh_button.click(
         fn=load_latest_run,
         inputs=[],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, monitor_overview, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
     refresh_evt.then(
         fn=_update_metric_trends,
@@ -1814,49 +1919,42 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
 
-    load_selected_button.click(
+    load_evt = load_selected_button.click(
         fn=load_selected_run,
         inputs=[run_selector],
-        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, monitor_overview, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
     )
-    load_selected_button.click(
+    load_evt.then(
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
     )
-    load_selected_button.click(
+    load_evt.then(
         fn=update_pool_selector,
         inputs=[run_dir_state, run_json_state],
         outputs=[pool_select, iteration_select_state],
     )
-    load_selected_button.click(
+    load_evt.then(
         fn=build_pool_badge,
         inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
         outputs=[pool_badge],
     )
-    load_selected_button.click(
+    load_evt.then(
         fn=_update_molecule_table,
         inputs=[run_dir_state, run_json_state, iteration_select_state],
         outputs=[mol_table],
         show_progress="hidden",
     )
-    load_selected_button.click(
+    load_evt.then(
         fn=_update_molecule_view,
         inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
-        outputs=[smiles_text, mol_svg, mol_status],
+        outputs=[smiles_text, mol_svg],
         show_progress="hidden",
     )
-    load_selected_button.click(
+    load_evt.then(
         fn=update_metric_controls,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends_state, metric_trends, metric_select],
-    )
-
-    refresh_button.click(
-        fn=_update_molecule_view,
-        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
-        outputs=[smiles_text, mol_svg, mol_status],
-        show_progress="hidden",
     )
 
     pool_select.change(
@@ -1878,7 +1976,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     mol_table.select(
         fn=select_molecule_from_table,
         inputs=[run_dir_state, run_json_state, iteration_select_state],
-        outputs=[mol_index_state, smiles_text, mol_svg, mol_status],
+        outputs=[mol_index_state, smiles_text, mol_svg],
         show_progress="hidden",
     ).then(
         fn=build_pool_badge,

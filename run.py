@@ -25,6 +25,34 @@ from liddia.prompt_template import *
 from liddia.utils import *
 from liddia.agent import *
 
+def _looks_goal_satisfied(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    positive_markers = [
+        "all molecules",
+        "satisfy the requirements",
+        "requirements are satisfied",
+        "answer: yes",
+        "goal check: yes",
+    ]
+    return any(m in t for m in positive_markers)
+
+
+def _model_declares_completion(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    markers = [
+        "task is complete",
+        "task has been successfully solved",
+        "no additional action is required",
+        "no further action is needed",
+        "already satisfied",
+    ]
+    return any(m in t for m in markers)
+
+
 def _load_anthropic_key() -> str:
     env_key = os.environ.get("ANTHROPIC_API_KEY")
     if env_key and env_key.strip():
@@ -208,6 +236,25 @@ def main(target: str = "ABCC8",
             #RUN ACTION
             action_id, action_input = get_metadata_from_response(response)
             logger[n_iter]["action"] = (action_id, action_input)
+            if not action_id or action_input is None:
+                # Graceful stop: model may explicitly declare completion instead of proposing an action.
+                if _looks_goal_satisfied(eval_str) and _model_declares_completion(response):
+                    logger["success"] = True
+                    logger[n_iter]["stop_reason"] = "Model declared task complete without additional action."
+                    with runtime_lock:
+                        _update_runtime(
+                            logger,
+                            start_time,
+                            step_display,
+                            max_iter,
+                            end_time=datetime.now().isoformat(),
+                        )
+                        _write_run_snapshot(path_to_log, task["target"], logger)
+                    break
+                err = "Could not parse Action/Input from model response"
+                logger["error_message"] = err
+                logger[n_iter]["error_message"] = err
+                break
             if "CODE" in action_id:
                 desc = get_desc_from_response(response)
                 action_input += [desc]
