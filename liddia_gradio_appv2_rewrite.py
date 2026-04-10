@@ -1,9 +1,12 @@
 import json
 import os
 import re
+import io
+import base64
 import subprocess
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -345,6 +348,29 @@ def _format_df_for_display(df: pd.DataFrame, decimals: int = 2) -> pd.DataFrame:
         except Exception:
             pass
     return df
+
+
+def _smiles_to_markdown_image(smiles: str) -> str:
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Draw
+
+        mol = Chem.MolFromSmiles(str(smiles))
+        if mol is None:
+            return "N/A"
+        # Render higher-res, then display at smaller size for crisp hover zoom.
+        img = Draw.MolToImage(mol, size=(420, 320))
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+        src = f"data:image/png;base64,{b64}"
+        return (
+            f"<a class='mol-thumb-link' href='{src}' target='_blank' rel='noopener noreferrer' title='Click to open full-size image'>"
+            f"<img class='mol-thumb' src='{src}' alt='molecule'/>"
+            "</a>"
+        )
+    except Exception:
+        return "N/A"
 
 
 
@@ -1251,7 +1277,15 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
         if not mol:
             return smiles, "<div>Could not parse SMILES.</div>", ""
         svg = Draw.MolsToGridImage([mol], molsPerRow=1, subImgSize=(250, 200), useSVG=True)
-        html = f"<div>{svg}</div>"
+        # Make the main viewer image clickable to open full-size in a new tab.
+        svg_url = "data:image/svg+xml;utf8," + urllib.parse.quote(str(svg))
+        html = (
+            "<div>"
+            f"<a href='{svg_url}' target='_blank' rel='noopener noreferrer' title='Open full-size image'>"
+            f"{svg}"
+            "</a>"
+            "</div>"
+        )
         return smiles, html, ""
     except Exception as e:
         return smiles, "<div>2D viewer requires RDKit.</div>", str(e)
@@ -1276,11 +1310,18 @@ def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, ma
     df = mem.stream.get(pool_id, {}).get("data")
     if df is None or not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
-    # Keep SMILES + numeric properties
+    # GUI display table: show molecule thumbnail instead of raw SMILES
     cols = [c for c in df.columns]
     out = df[cols].copy()
+    if "SMILES" in out.columns:
+        out.insert(0, "Molecule", out["SMILES"].map(_smiles_to_markdown_image))
+        out = out.drop(columns=["SMILES"])
     # Add index column
     out.insert(0, "Index", range(len(out)))
+    # Ensure consistent leading columns for display/update wiring.
+    lead_cols = ["Index", "Molecule"]
+    remaining_cols = [c for c in out.columns if c not in lead_cols]
+    out = out[lead_cols + remaining_cols]
     if max_rows and len(out) > max_rows:
         out = out.head(max_rows)
     return _format_df_for_display(out, decimals=2)
@@ -1302,7 +1343,12 @@ def download_current_pool_csv(run_dir_str: str, run_json_str: str, iteration: in
     if not pool_ids or iteration >= len(pool_ids):
         return None
     pool_id = pool_ids[iteration]
-    df = build_molecule_table(run_dir_str, run_json_str, iteration, max_rows=None)
+    mem = _load_memory(run_dir)
+    if not mem:
+        return None
+    df = mem.stream.get(pool_id, {}).get("data")
+    if df is None or not isinstance(df, pd.DataFrame):
+        return None
     csv_path = run_dir / f"{pool_id}.csv"
     df.to_csv(csv_path, index=False)
     return str(csv_path)
@@ -1313,10 +1359,15 @@ def download_all_pools_csv(run_dir_str: str, run_json_str: str):
     from pathlib import Path
     run_dir = Path(run_dir_str)
     pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
+    mem = _load_memory(run_dir)
+    if not mem:
+        return None
     zip_path = run_dir / "all_pools.zip"
     with zipfile.ZipFile(zip_path, 'w') as zf:
-        for i, pool_id in enumerate(pool_ids):
-            df = build_molecule_table(run_dir_str, run_json_str, i, max_rows=None)
+        for pool_id in pool_ids:
+            df = mem.stream.get(pool_id, {}).get("data")
+            if df is None or not isinstance(df, pd.DataFrame):
+                continue
             csv_path = run_dir / f"{pool_id}.csv"
             df.to_csv(csv_path, index=False)
             zf.write(csv_path, f"{pool_id}.csv")
@@ -1413,7 +1464,13 @@ def _update_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, m
 
 
 def _update_molecule_table(run_dir_str: str, run_json_str: str, iteration: int):
-    return build_molecule_table(run_dir_str, run_json_str, int(iteration))
+    df = build_molecule_table(run_dir_str, run_json_str, int(iteration))
+    if df is None or df.empty:
+        return gr.update(value=df)
+    dtypes = []
+    for col in df.columns:
+        dtypes.append("markdown" if str(col).lower() == "molecule" else "str")
+    return gr.update(value=df, headers=list(df.columns), datatype=dtypes)
 
 
 def _find_run_dir_by_json(json_path: Path) -> Optional[Path]:
@@ -1574,8 +1631,61 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 """
 <style>
 .resizable-table { overflow-x: auto; }
-.resizable-table table { table-layout: auto; width: 100%; }
-.resizable-table th, .resizable-table td { white-space: nowrap; }
+.resizable-table table { table-layout: fixed; width: 100%; }
+.resizable-table th, .resizable-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Keep index and molecule columns compact so property columns stay visible */
+.resizable-table table th:nth-child(1),
+.resizable-table table td:nth-child(1) { width: 60px; }
+.resizable-table table th:nth-child(2),
+.resizable-table table td:nth-child(2) {
+  width: 260px !important;
+  min-width: 260px !important;
+  max-width: 260px !important;
+  overflow: visible !important;
+  pointer-events: auto !important;
+  font-size: 0; /* prevent long markdown/data-uri text from expanding column */
+  line-height: 0;
+  position: relative;
+  z-index: 1;
+}
+.resizable-table table td:nth-child(2) img {
+  width: 240px !important;
+  max-width: 240px !important;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.resizable-table .mol-thumb {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transform-origin: center center;
+  cursor: zoom-in;
+  border-radius: 6px;
+}
+.resizable-table .mol-thumb:hover {
+  transform: scale(1.9);
+  position: relative;
+  z-index: 10000;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.22);
+  background: #fff;
+}
+.resizable-table .mol-thumb-link {
+  display: block;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 1;
+}
+.resizable-table .mol-thumb-link:hover {
+  z-index: 10000;
+}
+/* Keep report download output compact when empty */
+#report-file-output,
+#report-file-output .wrap,
+#report-file-output .file-preview,
+#report-file-output .empty,
+#report-file-output .file-drop {
+  min-height: 44px !important;
+  height: auto !important;
+}
 </style>
 """
             )
@@ -1586,7 +1696,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         runtime_md = gr.Markdown(visible=False)
                         results_md = gr.Markdown()
                         report_status = gr.Textbox(label="Report status", interactive=False)
-                        report_file = gr.File(label="Download report")
+                        report_file = gr.File(label="Download report", elem_id="report-file-output")
                         report_txt = gr.Button("Generate TXT")
                         report_csv = gr.Button("Generate CSV")
                         gr.Markdown("### Load previous run")
@@ -1597,14 +1707,14 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         gr.Markdown("### Molecule viewer (2D)")
                         pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
                         pool_badge = gr.HTML()
-                        smiles_text = gr.Textbox(label="SMILES", interactive=False)
-                        mol_svg = gr.HTML(label="2D structure")
-                        mol_status = gr.Textbox(label="Viewer status", interactive=False, visible=False)
                         with gr.Row():
                             gr.Markdown("#### Molecule properties")
                             download_current = gr.DownloadButton("📥 Download current pool", variant="secondary", size="sm")
                             download_all = gr.DownloadButton("📦 Download all molecule property sets", variant="secondary", size="sm")
                         mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table"])
+                        smiles_text = gr.Textbox(label="SMILES", interactive=False)
+                        mol_svg = gr.HTML(label="2D structure")
+                        mol_status = gr.Textbox(label="Viewer status", interactive=False, visible=False)
 
         with gr.Tab("Trends"):
             with gr.Row():
