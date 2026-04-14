@@ -1975,11 +1975,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[elapsed_html],
     )
 
-    refresh_button.click(
-        fn=_update_metric_trends,
-        inputs=[run_dir_state, run_json_state],
-        outputs=[metric_trends],
-    )
     load_evt = load_selected_button.click(
         fn=load_selected_run,
         inputs=[run_selector],
