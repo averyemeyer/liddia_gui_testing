@@ -4,7 +4,6 @@ import re
 import io
 import base64
 import subprocess
-import threading
 import time
 import urllib.parse
 from datetime import datetime
@@ -414,7 +413,10 @@ def build_run_overview(parsed: Dict[str, Any], run_json_path: Optional[Path]) ->
     runtime = parsed.get("runtime", {}) or {}
 
     lines = []
-    status = "SUCCESS" if parsed.get("success") else ("CANCELLED" if parsed.get("cancelled") else "RUNNING")
+    if _is_idle(parsed):
+        status = "IDLE"
+    else:
+        status = "SUCCESS" if parsed.get("success") else ("CANCELLED" if parsed.get("cancelled") else "RUNNING")
     lines.append(f"Status: {status}")
     if task.get("target"):
         lines.append(f"Target: {task.get('target')}")
@@ -492,6 +494,16 @@ def build_progress_html(parsed: Dict[str, Any]) -> str:
         max_iter = parsed.get("task", {}).get("resource") or parsed.get("step_count")
     if current_iter is None:
         current_iter = parsed.get("step_count")
+    if _is_idle(parsed):
+        return (
+            "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff;'>"
+            "<div style='font-weight:600;margin-bottom:6px;'>Progress: idle (waiting to start)</div>"
+            "<div style='background:#f1f5f9;border-radius:8px;height:12px;overflow:hidden;'>"
+            "<div style='height:12px;width:0%;background:#cbd5e1;'></div>"
+            "</div>"
+            "</div>"
+        )
+
     if current_iter is None or not max_iter:
         return (
             "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff;'>"
@@ -599,6 +611,23 @@ def _is_completed(parsed: Dict[str, Any]) -> bool:
         return True
     runtime = parsed.get("runtime", {}) or {}
     return bool(runtime.get("end_time"))
+
+
+def _is_idle(parsed: Dict[str, Any]) -> bool:
+    status_text = str(parsed.get("status_text") or "").strip().lower()
+    if status_text.startswith("no run yet"):
+        return True
+    runtime = parsed.get("runtime", {}) or {}
+    steps = parsed.get("steps", []) or []
+    task = parsed.get("task", {}) or {}
+    return (
+        not steps
+        and not runtime.get("start_time")
+        and not task
+        and parsed.get("success") is None
+        and not parsed.get("cancelled")
+        and not parsed.get("error_message")
+    )
 
 
 def _action_label(action_name: Optional[str]) -> str:
@@ -931,6 +960,107 @@ def _read_lock() -> Dict[str, Any]:
         return {}
 
 
+def _find_run_dir_after(started_at: float, exclude: Optional[set] = None) -> Optional[Path]:
+    if not LOG_ROOT.exists():
+        return None
+    exclude = exclude or set()
+    candidates: List[Path] = []
+    for child in LOG_ROOT.iterdir():
+        if not child.is_dir() or child.name in exclude:
+            continue
+        try:
+            mtime = child.stat().st_mtime
+        except Exception:
+            continue
+        if mtime >= started_at - 2:
+            candidates.append(child)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+
+
+def _has_run_activity_since(started_at: float, known_dirs: Optional[set] = None) -> bool:
+    if not LOG_ROOT.exists():
+        return False
+    known_dirs = known_dirs or set()
+    for child in LOG_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in known_dirs:
+            continue
+        try:
+            if child.stat().st_mtime >= started_at - 2:
+                return True
+        except Exception:
+            continue
+    for j in LOG_ROOT.glob("*/*.json"):
+        try:
+            if j.stat().st_mtime >= started_at - 2:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def refresh_monitor_outputs(run_dir_str: str, run_json_str: str) -> Tuple[Any, ...]:
+    run_dir = Path(run_dir_str) if run_dir_str else None
+    run_json_path = Path(run_json_str) if run_json_str else None
+    if run_json_path and not run_json_path.exists():
+        run_json_path = None
+    if run_dir and not run_dir.exists():
+        run_dir = None
+
+    lock_info = _read_lock()
+    pid = lock_info.get("pid")
+    running = _pid_running(pid)
+    started_at = float(lock_info.get("started_at") or 0) if lock_info else 0
+    known_dirs = set(lock_info.get("known_dirs") or []) if lock_info else set()
+
+    # Guard against stale lock files / PID reuse showing false "Running" on app open.
+    if running and started_at:
+        lock_age = time.time() - started_at
+        if lock_age > 180 and not _has_run_activity_since(started_at, known_dirs):
+            _run_lock_path().unlink(missing_ok=True)
+            lock_info = {}
+            running = False
+
+    if lock_info and not running:
+        _run_lock_path().unlink(missing_ok=True)
+        lock_info = {}
+
+    # Keep active run in focus while a detached worker is running.
+    if running:
+        started_at = float(lock_info.get("started_at") or time.time())
+        known_dirs = set(lock_info.get("known_dirs") or [])
+        # Important: while a new run is active, do not keep rendering an older run directory.
+        # If the current UI state points to a pre-existing run, ignore it until a new run dir appears.
+        if run_dir and run_dir.name in known_dirs:
+            run_dir = None
+            run_json_path = None
+
+        if run_dir is None:
+            run_dir = _detect_new_run_dir(known_dirs, started_at) or _find_run_dir_after(started_at, known_dirs)
+        if run_dir:
+            run_json_path = _latest_run_json_in_dir(run_dir)
+        run_data = _safe_read_json(run_json_path) if run_json_path else None
+        status_text = "Run in progress..." if run_json_path else "Run started. Waiting for run artifacts..."
+        return _render_outputs(status_text, run_data, run_json_path, run_dir=run_dir)
+
+    # No active run: preserve currently loaded run, if any.
+    if run_json_path:
+        run_data = _safe_read_json(run_json_path)
+        if run_data:
+            return _render_outputs("Loaded run.", run_data, run_json_path, run_dir=run_dir or run_json_path.parent)
+
+    if run_dir:
+        run_json_path = _latest_run_json_in_dir(run_dir)
+        run_data = _safe_read_json(run_json_path) if run_json_path else None
+        if run_data:
+            return _render_outputs("Loaded run.", run_data, run_json_path, run_dir=run_dir)
+
+    return _render_outputs("No run yet. Click Run LIDDiA to start.", None, None, run_dir=None)
+
+
 def run_liddia(
     target: str,
     max_iter: int,
@@ -948,7 +1078,11 @@ def run_liddia(
         else:
             yield _render_outputs("Run already in progress. Cancel or wait.", None, None, run_dir=None)
             return
-    lock_path.write_text(json.dumps({"pid": None, "started_at": time.time()}))
+    if not LOG_ROOT.exists():
+        LOG_ROOT.mkdir(parents=True, exist_ok=True)
+
+    existing_dirs = {p.name for p in LOG_ROOT.iterdir()} if LOG_ROOT.exists() else set()
+    lock_path.write_text(json.dumps({"pid": None, "started_at": time.time(), "known_dirs": sorted(existing_dirs)}))
 
     # Reset UI state for a fresh run
     yield _render_outputs("Starting new run...", None, None, run_dir=None)
@@ -978,78 +1112,57 @@ def run_liddia(
         model.strip(),
     ]
 
-    try:
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(REPO_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
+    log_stamp = int(time.time())
+    stdout_log = LOG_ROOT / f".run_{log_stamp}.stdout.log"
+    stderr_log = LOG_ROOT / f".run_{log_stamp}.stderr.log"
+    stdout_fh = open(stdout_log, "a")
+    stderr_fh = open(stderr_log, "a")
+    popen_kwargs: Dict[str, Any] = {
+        "cwd": str(REPO_ROOT),
+        "env": env,
+        "stdout": stdout_fh,
+        "stderr": stderr_fh,
+        "text": True,
+        "bufsize": 1,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
         )
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(cmd, **popen_kwargs)
     except Exception as e:
+        stdout_fh.close()
+        stderr_fh.close()
         yield _render_outputs(f"Failed to start run: {e}", None, None)
         lock_path.unlink(missing_ok=True)
         return
-    # update lock with real pid
-    lock_path.write_text(json.dumps({"pid": process.pid, "started_at": time.time()}))
+    stdout_fh.close()
+    stderr_fh.close()
+    lock_path.write_text(
+        json.dumps(
+            {
+                "pid": process.pid,
+                "started_at": time.time(),
+                "known_dirs": sorted(existing_dirs),
+                "target": target.strip(),
+                "model": model.strip(),
+                "max_iter": int(max_iter),
+                "stdout_log": str(stdout_log),
+                "stderr_log": str(stderr_log),
+            }
+        )
+    )
 
-    stdout_buffer: List[str] = []
-    stderr_buffer: List[str] = []
-
-    def _drain(stream, buffer):
-        if stream is None:
-            return
-        for line in iter(stream.readline, ""):
-            buffer.append(line)
-
-    threads = [
-        threading.Thread(target=_drain, args=(process.stdout, stdout_buffer), daemon=True),
-        threading.Thread(target=_drain, args=(process.stderr, stderr_buffer), daemon=True),
-    ]
-    for t in threads:
-        t.start()
-
-    start_time = time.time()
-    timeout_s = 60 * 30
-    existing_dirs = {p.name for p in LOG_ROOT.iterdir()} if LOG_ROOT.exists() else set()
-    active_run_dir: Optional[Path] = None
-
-    while True:
-        if process.poll() is not None:
-            break
-        if time.time() - start_time > timeout_s:
-            process.kill()
-            yield _render_outputs("Run timed out after 30 minutes.", None, None, run_dir=active_run_dir)
-            lock_path.unlink(missing_ok=True)
-            return
-
-        if active_run_dir is None:
-            active_run_dir = _detect_new_run_dir(existing_dirs, start_time)
-        run_json_path = _latest_run_json_in_dir(active_run_dir) if active_run_dir else None
-        run_data = _safe_read_json(run_json_path) if run_json_path else None
-        status_text = "Run in progress..."
-        if active_run_dir is None:
-            status_text = "Run started. Waiting for run artifacts..."
-        yield _render_outputs(status_text, run_data, run_json_path, run_dir=active_run_dir)
-        time.sleep(2)
-
-    for t in threads:
-        t.join(timeout=1)
-
-    if active_run_dir is None:
-        active_run_dir = _detect_new_run_dir(existing_dirs, start_time)
-    run_json_path = _latest_run_json_in_dir(active_run_dir) if active_run_dir else _latest_run_json()
+    active_run_dir = _detect_new_run_dir(existing_dirs, time.time()) or _find_run_dir_after(time.time(), existing_dirs)
+    run_json_path = _latest_run_json_in_dir(active_run_dir) if active_run_dir else None
     run_data = _safe_read_json(run_json_path) if run_json_path else None
-
-    if process.returncode == 0:
-        status = "Run finished successfully."
-    else:
-        status = f"Run failed with exit code {process.returncode}."
-
-    yield _render_outputs(status, run_data, run_json_path, run_dir=active_run_dir)
-    lock_path.unlink(missing_ok=True)
+    status_text = "Run in progress..." if run_json_path else "Run started. Waiting for run artifacts..."
+    yield _render_outputs(status_text, run_data, run_json_path, run_dir=active_run_dir)
+    return
 
 
 def load_latest_run() -> Tuple[Any, ...]:
@@ -1700,7 +1813,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     status_badge = gr.HTML(label="Status badge", visible=False)
                     progress_html = gr.HTML(label="Run summary")
                     elapsed_html = gr.HTML(label="Elapsed time")
-                    elapsed_timer = gr.Timer(1.0)
+                    monitor_timer = gr.Timer(2.0)
                     live_html = gr.HTML(label="Live status", visible=False)
                     stage_html = gr.HTML(label="Action activity")
 
@@ -1988,10 +2101,46 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends_state, metric_trends, metric_select],
     )
 
-    elapsed_timer.tick(
+    monitor_tick = monitor_timer.tick(
+        fn=refresh_monitor_outputs,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[status, overview, progress_html, runtime_md, results_md, metrics_df, monitor_overview, steps_df, metric_trends, stage_html, live_html, run_dir_state, run_json_state, status_badge],
+        queue=False,
+        show_progress="hidden",
+    )
+    monitor_tick.then(
+        fn=update_metric_controls,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[metric_trends_state, metric_trends, metric_select],
+        show_progress="hidden",
+    )
+    monitor_tick.then(
+        fn=update_pool_selector,
+        inputs=[run_dir_state, run_json_state],
+        outputs=[pool_select, iteration_select_state],
+        show_progress="hidden",
+    ).then(
+        fn=build_pool_badge,
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
+        outputs=[pool_badge],
+        show_progress="hidden",
+    ).then(
+        fn=_update_molecule_table,
+        inputs=[run_dir_state, run_json_state, iteration_select_state],
+        outputs=[mol_table],
+        show_progress="hidden",
+    ).then(
+        fn=_update_molecule_view,
+        inputs=[run_dir_state, run_json_state, iteration_select_state, mol_index_state],
+        outputs=[smiles_text, mol_svg],
+        show_progress="hidden",
+    )
+    monitor_timer.tick(
         fn=build_elapsed_html,
         inputs=[run_dir_state, run_json_state],
         outputs=[elapsed_html],
+        queue=False,
+        show_progress="hidden",
     )
 
     load_evt = load_selected_button.click(
