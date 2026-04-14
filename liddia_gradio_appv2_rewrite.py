@@ -17,11 +17,13 @@ import pickle
 import types
 import sys
 import math
+import tempfile
 
 REPO_ROOT = Path(__file__).resolve().parent
 RUN_PY = REPO_ROOT / "run.py"
 LOG_ROOT = REPO_ROOT / "log"
 PDB_DIR = REPO_ROOT / "dataset" / "pdb"
+REPORT_TMP_DIR = Path(tempfile.gettempdir())
 
 def _detect_targets() -> List[str]:
     if not PDB_DIR.exists():
@@ -621,6 +623,9 @@ def _get_stop_reason(parsed: Dict[str, Any]) -> Optional[str]:
         step_reason = step.get("stop_reason")
         if step_reason:
             return str(step_reason)
+    status_text = str(parsed.get("status_text") or "").strip()
+    if status_text and ("fail" in status_text.lower() or "error" in status_text.lower()):
+        return status_text
     return None
 
 def build_action_timeline(parsed: Dict[str, Any]) -> str:
@@ -684,6 +689,15 @@ def build_stage_panel(parsed: Dict[str, Any]) -> str:
     steps = parsed.get("steps", []) or []
     if not steps:
         status_text = parsed.get("status_text") or ""
+        reason = _get_stop_reason(parsed)
+        if reason:
+            return (
+                "<div style='border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff;'>"
+                "<div style='font-weight:700;margin-bottom:6px;'>Run ended</div>"
+                "<div style='font-weight:600;margin-bottom:4px;'>Stop/Fail reason</div>"
+                f"<div style='color:#334155;'>{reason}</div>"
+                "</div>"
+            )
         if "Starting" in status_text or "Run in progress" in status_text:
             return (
                 "<div style='border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff;'>"
@@ -1110,13 +1124,13 @@ def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple
             "summary": parsed,
             "run_json_path": str(run_json_path) if run_json_path else None,
         }
-        tmp_path = Path("/var/folders/_7/jsnvb1yd3lxfhpllggb5cqsh0000gp/T") / f"liddia_report_{int(time.time())}.json"
+        tmp_path = REPORT_TMP_DIR / f"liddia_report_{int(time.time())}.json"
         tmp_path.write_text(json.dumps(payload, indent=2))
         return "JSON report ready.", str(tmp_path)
 
     if report_type == "csv":
         steps_df = build_metrics_table(parsed)
-        tmp_path = Path("/var/folders/_7/jsnvb1yd3lxfhpllggb5cqsh0000gp/T") / f"liddia_report_{int(time.time())}.csv"
+        tmp_path = REPORT_TMP_DIR / f"liddia_report_{int(time.time())}.csv"
         steps_df.to_csv(tmp_path, index=False)
         return "CSV report ready (final pool metrics).", str(tmp_path)
 
@@ -1145,7 +1159,7 @@ def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple
     if not report_text.strip():
         return "No run data available for report.", None
 
-    tmp_path = Path("/var/folders/_7/jsnvb1yd3lxfhpllggb5cqsh0000gp/T") / f"liddia_report_{int(time.time())}.txt"
+    tmp_path = REPORT_TMP_DIR / f"liddia_report_{int(time.time())}.txt"
     tmp_path.write_text(report_text)
     return "Text report ready.", str(tmp_path)
 
@@ -1665,8 +1679,18 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 with gr.Column(scale=1):
                     target = gr.Dropdown(DEFAULT_TARGETS, value="EGFR", label="Target", allow_custom_value=True)
                     max_iter = gr.Number(value=2, precision=0, label="Max iterations")
+                    gr.Markdown("#### Provider (future)")
+                    provider_mock = gr.Dropdown(
+                        choices=["Anthropic (current)", "OpenAI (planned)", "Local model (planned)"],
+                        value="Anthropic (current)",
+                        label="LLM provider",
+                        interactive=False,
+                    )
                     model = gr.Dropdown(DEFAULT_MODELS, value="claude-opus-4-6", label="Model", allow_custom_value=True)
                     anthropic_api_key = gr.Textbox(label="Anthropic API key", type="password", placeholder="sk-ant-...")
+                    provider_note = gr.Markdown(
+                        "_Placeholder UI only: provider switching is not enabled yet. Current runs use Anthropic._"
+                    )
                     with gr.Row():
                         run_button = gr.Button("Run LIDDIA", variant="primary")
                         refresh_button = gr.Button("Load latest run")
@@ -1823,6 +1847,46 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 with gr.Column(scale=1):
                     steps_df = gr.Dataframe(label="Iteration rollup", interactive=False, elem_classes=["resizable-table"])
 
+        with gr.Tab("Help"):
+            gr.Markdown(
+                "### GUI Guide (Placeholder)\n"
+                "- **Monitor:** Start runs, watch action/iteration progress, and inspect live status.\n"
+                "- **Results:** Browse pool outputs, molecule properties, and export reports.\n"
+                "- **Trends:** Inspect metric behavior across iterations.\n"
+                "\n"
+                "### Workflow Notes (Placeholder)\n"
+                "- Runs write artifacts to `log/<run_id>/`.\n"
+                "- `*.json` stores run metadata and iteration history.\n"
+                "- `*_memory.pkl` stores molecule pools and dataframes for viewer/tables.\n"
+                "\n"
+                "### Common Questions (Placeholder)\n"
+                "- Why is a run not updating yet?\n"
+                "- How do I load a previous run?\n"
+                "- What does each action type mean (`GENERATE`, `OPTIMIZE`, `CODE`)?\n"
+            )
+            metric_info_df = pd.DataFrame(
+                [
+                    {"metric": "Diversity", "definition": "Definition placeholder.", "interpretation": "Interpretation placeholder."},
+                    {"metric": "SAScore", "definition": "Definition placeholder.", "interpretation": "Interpretation placeholder."},
+                    {"metric": "Lipinski", "definition": "Definition placeholder.", "interpretation": "Interpretation placeholder."},
+                    {"metric": "Novelty", "definition": "Definition placeholder.", "interpretation": "Interpretation placeholder."},
+                    {"metric": "Vina Score", "definition": "Definition placeholder.", "interpretation": "Interpretation placeholder."},
+                    {"metric": "QED", "definition": "Definition placeholder.", "interpretation": "Interpretation placeholder."},
+                ]
+            )
+            gr.Dataframe(
+                value=metric_info_df,
+                label="Metric Definitions (Placeholder)",
+                interactive=False,
+                wrap=True,
+            )
+            gr.Markdown(
+                "### Example Run Narrative (Placeholder)\n"
+                "1. `GENERATE` creates an initial molecule pool from target pocket context.\n"
+                "2. `OPTIMIZE` or `CODE` refines pools against constraints.\n"
+                "3. Goal evaluation checks if **all molecules in selected pool** satisfy the requirements.\n"
+            )
+
     run_button.click(
         fn=reset_molecule_viewer_state,
         inputs=[],
@@ -1911,14 +1975,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[elapsed_html],
     )
 
-
-
     refresh_button.click(
         fn=_update_metric_trends,
         inputs=[run_dir_state, run_json_state],
         outputs=[metric_trends],
     )
-
     load_evt = load_selected_button.click(
         fn=load_selected_run,
         inputs=[run_selector],
