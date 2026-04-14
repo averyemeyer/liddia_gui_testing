@@ -1762,19 +1762,42 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 .resizable-table .mol-thumb-link:hover {
   z-index: 10000;
 }
-/* Header tooltip placeholders for molecule property metrics */
-.resizable-table table th:nth-child(3),
-.resizable-table table th:nth-child(4),
-.resizable-table table th:nth-child(5),
-.resizable-table table th:nth-child(6),
-.resizable-table table th:nth-child(7) {
+/* Dynamic metric tooltips (attached by header name, not column index) */
+.resizable-table table th[data-metric-tooltip] {
   cursor: help;
+  position: relative;
+  overflow: visible;
 }
-.resizable-table table th:nth-child(3)::after,
-.resizable-table table th:nth-child(4)::after,
-.resizable-table table th:nth-child(5)::after,
-.resizable-table table th:nth-child(6)::after,
-.resizable-table table th:nth-child(7)::after {
+.resizable-table table th[data-metric-tooltip]::after {
+  content: attr(data-metric-tooltip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 20000;
+  background: #111827;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+.resizable-table table th[data-metric-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* Fallback tooltip behavior for molecule properties table:
+   first two columns are Index/Molecule, remaining columns are metrics. */
+.mol-prop-table table th:nth-child(n+3) {
+  cursor: help;
+  position: relative;
+  overflow: visible;
+}
+.mol-prop-table table th:nth-child(n+3)::after {
   content: "Definition placeholder.";
   position: absolute;
   left: 0;
@@ -1792,11 +1815,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
   transition: opacity 0.12s ease, transform 0.12s ease;
   pointer-events: none;
 }
-.resizable-table table th:nth-child(3):hover::after,
-.resizable-table table th:nth-child(4):hover::after,
-.resizable-table table th:nth-child(5):hover::after,
-.resizable-table table th:nth-child(6):hover::after,
-.resizable-table table th:nth-child(7):hover::after {
+.mol-prop-table table th:nth-child(n+3):hover::after {
   opacity: 1;
   transform: translateY(0);
 }
@@ -1834,7 +1853,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                             gr.Markdown("#### Molecule properties")
                             download_current = gr.DownloadButton("📥 Download current pool", variant="secondary", size="sm")
                             download_all = gr.DownloadButton("📦 Download all molecule property sets", variant="secondary", size="sm")
-                        mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table"])
+                        mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table", "mol-prop-table"])
                         smiles_text = gr.Textbox(label="SMILES", interactive=False)
                         mol_svg = gr.HTML(label="2D structure")
 
