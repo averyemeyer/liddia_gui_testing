@@ -873,25 +873,28 @@ def build_metrics_table(parsed: Dict[str, Any]) -> pd.DataFrame:
     return _format_df_for_display(_round_df(pd.DataFrame(rows, columns=["metric", "min", "max", "median"])))
 
 def build_results_markdown(parsed: Dict[str, Any]) -> str:
-    final_pool = parsed.get("final_pool", {}) or {}
-    if not final_pool:
-        return "No final pool found yet."
-    lines = ["**Final Pool**"]
-    pool_id = final_pool.get("pool") or "Unknown"
-    size = final_pool.get("size") or "—"
-    diversity = final_pool.get("diversity")
-    lines.append(f"- Pool: {pool_id}")
-    lines.append(f"- Molecules: {size}")
-    if diversity is not None:
-        lines.append(f"- Diversity: {_fmt_str(diversity)}")
-    metrics = final_pool.get("metrics") or {}
-    for metric, stats in metrics.items():
-        if isinstance(stats, dict):
-            mn = stats.get("min")
-            mx = stats.get("max")
-            med = stats.get("median")
-            lines.append(f"- {metric}: min {_fmt_str(mn)}, max {_fmt_str(mx)}, median {_fmt_str(med)}")
-    return "\n".join(lines)
+    # Temporarily hidden per UI request (keep logic commented for easy restore).
+    #
+    # final_pool = parsed.get("final_pool", {}) or {}
+    # if not final_pool:
+    #     return "No final pool found yet."
+    # lines = ["**Final Pool**"]
+    # pool_id = final_pool.get("pool") or "Unknown"
+    # size = final_pool.get("size") or "—"
+    # diversity = final_pool.get("diversity")
+    # lines.append(f"- Pool: {pool_id}")
+    # lines.append(f"- Molecules: {size}")
+    # if diversity is not None:
+    #     lines.append(f"- Diversity: {_fmt_str(diversity)}")
+    # metrics = final_pool.get("metrics") or {}
+    # for metric, stats in metrics.items():
+    #     if isinstance(stats, dict):
+    #         mn = stats.get("min")
+    #         mx = stats.get("max")
+    #         med = stats.get("median")
+    #         lines.append(f"- {metric}: min {_fmt_str(mn)}, max {_fmt_str(mx)}, median {_fmt_str(med)}")
+    # return "\n".join(lines)
+    return ""
 
 # ---------- run/load functions ----------
 def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_json_path: Optional[Path], run_dir: Optional[Path] = None):
@@ -1275,6 +1278,11 @@ def build_report(run_dir_str: str, run_json_str: str, report_type: str) -> Tuple
     tmp_path = REPORT_TMP_DIR / f"liddia_report_{int(time.time())}.txt"
     tmp_path.write_text(report_text)
     return "Text report ready.", str(tmp_path)
+
+
+def build_report_file(run_dir_str: str, run_json_str: str, report_type: str) -> Optional[str]:
+    _, file_path = build_report(run_dir_str, run_json_str, report_type)
+    return file_path
 
 
 def _load_memory(run_dir: Path):
@@ -1950,7 +1958,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
                         runtime_md = gr.Markdown(visible=False)
                         results_md = gr.Markdown()
-                        report_status = gr.Textbox(label="Report status", interactive=False)
                         report_file = gr.File(label="Download report", elem_id="report-file-output")
                         report_txt = gr.Button("Generate TXT")
                         report_csv = gr.Button("Generate CSV")
@@ -2225,14 +2232,14 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     )
 
     report_txt.click(
-        fn=build_report,
+        fn=build_report_file,
         inputs=[run_dir_state, run_json_state, gr.State("txt")],
-        outputs=[report_status, report_file],
+        outputs=[report_file],
     )
     report_csv.click(
-        fn=build_report,
+        fn=build_report_file,
         inputs=[run_dir_state, run_json_state, gr.State("csv")],
-        outputs=[report_status, report_file],
+        outputs=[report_file],
     )
 
 
