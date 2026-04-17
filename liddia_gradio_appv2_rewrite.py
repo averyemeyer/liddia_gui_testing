@@ -23,6 +23,7 @@ RUN_PY = REPO_ROOT / "run.py"
 LOG_ROOT = REPO_ROOT / "log"
 PDB_DIR = REPO_ROOT / "dataset" / "pdb"
 REPORT_TMP_DIR = Path(tempfile.gettempdir())
+_LAST_GOOD_RUN_DATA: Dict[str, Dict[str, Any]] = {}
 
 def _detect_targets() -> List[str]:
     if not PDB_DIR.exists():
@@ -65,10 +66,20 @@ REASON_PATTERN = re.compile(r"Reason:\s*(.+?)(?:\nAnswer:|$)", re.IGNORECASE | r
 
 # ---------- basic I/O ----------
 def _safe_read_json(path: Path) -> Optional[Dict[str, Any]]:
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return None
+    # run.py may rewrite JSON while we're polling; retry briefly to avoid UI flicker
+    for _ in range(4):
+        try:
+            text = path.read_text()
+            if not text.strip():
+                time.sleep(0.05)
+                continue
+            return json.loads(text)
+        except json.JSONDecodeError:
+            time.sleep(0.05)
+            continue
+        except Exception:
+            return None
+    return None
 
 
 def _latest_run_json() -> Optional[Path]:
@@ -936,6 +947,14 @@ def _render_outputs(status_text: str, run_data: Optional[Dict[str, Any]], run_js
         f"<span style='color:#64748b;'>Last update: {last_event_time}</span>"
         "</div>"
     )
+    if "recovered active run from disk" in (status_text or "").lower():
+        status_badge = (
+            "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+            f"<span style='padding:4px 10px;border-radius:999px;background:{status_color};color:{status_text_color};font-weight:600;'>{status_pill}</span>"
+            f"<span style='color:#64748b;'>Last update: {last_event_time}</span>"
+            "<span style='padding:4px 10px;border-radius:999px;background:#dbeafe;color:#1e40af;font-weight:600;'>Recovered active run from disk</span>"
+            "</div>"
+        )
     return status_text, summary, progress_html, runtime_md, results_md, metrics_df, summary, steps_df, metric_trends_fig, stage_html, live_html, run_dir_str, run_json_str, status_badge
 
 
@@ -961,6 +980,92 @@ def _read_lock() -> Dict[str, Any]:
         return json.loads(lock_path.read_text())
     except Exception:
         return {}
+
+
+def _write_lock(info: Dict[str, Any]) -> None:
+    try:
+        _run_lock_path().write_text(json.dumps(info, indent=2))
+    except Exception:
+        pass
+
+
+def _run_state_path(run_dir: Optional[Path]) -> Optional[Path]:
+    if not run_dir:
+        return None
+    return run_dir / "run_state.json"
+
+
+def _write_run_state(
+    run_dir: Optional[Path],
+    *,
+    status: str,
+    pid: Optional[int] = None,
+    started_at: Optional[float] = None,
+    finished_at: Optional[float] = None,
+    target: Optional[str] = None,
+    model: Optional[str] = None,
+    max_iter: Optional[int] = None,
+    run_json_path: Optional[Path] = None,
+) -> None:
+    path = _run_state_path(run_dir)
+    if not path:
+        return
+    payload: Dict[str, Any] = {
+        "status": status,
+        "updated_at": datetime.now().isoformat(),
+        "pid": pid,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "target": target,
+        "model": model,
+        "max_iter": max_iter,
+        "run_dir": str(run_dir),
+        "run_json_path": str(run_json_path) if run_json_path else None,
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2))
+    except Exception:
+        pass
+
+
+def _send_desktop_notification(title: str, message: str) -> None:
+    title = (title or "LIDDiA").replace('"', "'")
+    message = (message or "").replace('"', "'")
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    f'display notification "{message}" with title "{title}"',
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        if os.name == "nt":
+            # Lightweight fallback for Windows without extra dependencies.
+            ps = (
+                "Add-Type -AssemblyName PresentationFramework; "
+                f"[System.Windows.MessageBox]::Show('{message}', '{title}') | Out-Null"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        # Linux fallback (if notify-send exists)
+        subprocess.run(
+            ["notify-send", title, message],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
 
 
 def _find_run_dir_after(started_at: float, exclude: Optional[set] = None) -> Optional[Path]:
@@ -1028,6 +1133,31 @@ def refresh_monitor_outputs(run_dir_str: str, run_json_str: str) -> Tuple[Any, .
             running = False
 
     if lock_info and not running:
+        active_run_dir_str = lock_info.get("active_run_dir")
+        active_run_dir = Path(active_run_dir_str) if active_run_dir_str else None
+        latest_json = None
+        run_outcome = "completed"
+        if active_run_dir and active_run_dir.exists():
+            latest_json = _latest_run_json_in_dir(active_run_dir)
+            run_json = _safe_read_json(latest_json) if latest_json else None
+            if isinstance(run_json, dict) and run_json.get("success") is False:
+                run_outcome = "failed"
+            _write_run_state(
+                active_run_dir,
+                status="completed",
+                pid=lock_info.get("pid"),
+                started_at=float(lock_info.get("started_at") or 0),
+                finished_at=time.time(),
+                target=lock_info.get("target"),
+                model=lock_info.get("model"),
+                max_iter=lock_info.get("max_iter"),
+                run_json_path=latest_json,
+            )
+            run_name = active_run_dir.name
+            _send_desktop_notification(
+                "LIDDiA Run Finished",
+                f"{run_name} {run_outcome}. You can reopen the GUI to review results.",
+            )
         _run_lock_path().unlink(missing_ok=True)
         lock_info = {}
 
@@ -1035,18 +1165,92 @@ def refresh_monitor_outputs(run_dir_str: str, run_json_str: str) -> Tuple[Any, .
     if running:
         started_at = float(lock_info.get("started_at") or time.time())
         known_dirs = set(lock_info.get("known_dirs") or [])
+        active_run_dir_str = lock_info.get("active_run_dir")
+        active_run_dir = Path(active_run_dir_str) if active_run_dir_str else None
+        recovered_from_disk = False
+        notice_until = float(lock_info.get("recovered_notice_until") or 0)
+        if active_run_dir and (not run_dir_str or str(active_run_dir) != run_dir_str):
+            if not lock_info.get("recovered_notified"):
+                lock_info["recovered_notified"] = True
+                lock_info["recovered_notice_until"] = time.time() + 45
+                _write_lock(lock_info)
+                notice_until = float(lock_info.get("recovered_notice_until") or 0)
+            recovered_from_disk = time.time() < notice_until
+        elif notice_until > 0:
+            recovered_from_disk = time.time() < notice_until
         # Important: while a new run is active, do not keep rendering an older run directory.
         # If the current UI state points to a pre-existing run, ignore it until a new run dir appears.
         if run_dir and run_dir.name in known_dirs:
             run_dir = None
             run_json_path = None
 
+        if active_run_dir and active_run_dir.exists():
+            run_dir = active_run_dir
         if run_dir is None:
             run_dir = _detect_new_run_dir(known_dirs, started_at) or _find_run_dir_after(started_at, known_dirs)
         if run_dir:
+            if str(run_dir) != str(active_run_dir_str or ""):
+                lock_info["active_run_dir"] = str(run_dir)
+                _write_lock(lock_info)
             run_json_path = _latest_run_json_in_dir(run_dir)
+            _write_run_state(
+                run_dir,
+                status="running",
+                pid=lock_info.get("pid"),
+                started_at=started_at,
+                target=lock_info.get("target"),
+                model=lock_info.get("model"),
+                max_iter=lock_info.get("max_iter"),
+                run_json_path=run_json_path,
+            )
         run_data = _safe_read_json(run_json_path) if run_json_path else None
-        status_text = "Run in progress..." if run_json_path else "Run started. Waiting for run artifacts..."
+        prev_data = None
+        prev_json = None
+        if run_json_str:
+            prev_json = Path(run_json_str)
+            if prev_json.exists():
+                prev_data = _safe_read_json(prev_json)
+        # If the current snapshot is temporarily unreadable (mid-write), keep the last known JSON.
+        if run_data is None and prev_data:
+            run_json_path = prev_json
+            run_data = prev_data
+        # Guard against transient JSON rewrites that momentarily drop step history.
+        if run_data and prev_data:
+            try:
+                cur_steps = len(_extract_iterations(run_data))
+                old_steps = len(_extract_iterations(prev_data))
+            except Exception:
+                cur_steps = 0
+                old_steps = 0
+            if old_steps > 0 and cur_steps < old_steps:
+                run_json_path = prev_json
+                run_data = prev_data
+        # Final guard: keep an in-memory last-good snapshot during active runs.
+        cache_key = str(run_dir) if run_dir else ""
+        if cache_key:
+            cached = _LAST_GOOD_RUN_DATA.get(cache_key)
+            if run_data:
+                try:
+                    cur_steps = len(_extract_iterations(run_data))
+                except Exception:
+                    cur_steps = 0
+                if cached:
+                    try:
+                        cached_steps = len(_extract_iterations(cached))
+                    except Exception:
+                        cached_steps = 0
+                    if cached_steps > 0 and cur_steps < cached_steps:
+                        run_data = cached
+                    elif cur_steps >= cached_steps:
+                        _LAST_GOOD_RUN_DATA[cache_key] = run_data
+                else:
+                    _LAST_GOOD_RUN_DATA[cache_key] = run_data
+            elif cached:
+                run_data = cached
+        if run_json_path:
+            status_text = "Run in progress... (recovered active run from disk)" if recovered_from_disk else "Run in progress..."
+        else:
+            status_text = "Run started. Waiting for run artifacts..."
         return _render_outputs(status_text, run_data, run_json_path, run_dir=run_dir)
 
     # No active run: preserve currently loaded run, if any.
@@ -1085,7 +1289,8 @@ def run_liddia(
         LOG_ROOT.mkdir(parents=True, exist_ok=True)
 
     existing_dirs = {p.name for p in LOG_ROOT.iterdir()} if LOG_ROOT.exists() else set()
-    lock_path.write_text(json.dumps({"pid": None, "started_at": time.time(), "known_dirs": sorted(existing_dirs)}))
+    start_ts = time.time()
+    _write_lock({"pid": None, "started_at": start_ts, "known_dirs": sorted(existing_dirs), "active_run_dir": None})
 
     # Reset UI state for a fresh run
     yield _render_outputs("Starting new run...", None, None, run_dir=None)
@@ -1145,22 +1350,34 @@ def run_liddia(
         return
     stdout_fh.close()
     stderr_fh.close()
-    lock_path.write_text(
-        json.dumps(
-            {
-                "pid": process.pid,
-                "started_at": time.time(),
-                "known_dirs": sorted(existing_dirs),
-                "target": target.strip(),
-                "model": model.strip(),
-                "max_iter": int(max_iter),
-                "stdout_log": str(stdout_log),
-                "stderr_log": str(stderr_log),
-            }
-        )
-    )
+    started_at = time.time()
+    lock_info = {
+        "pid": process.pid,
+        "started_at": started_at,
+        "known_dirs": sorted(existing_dirs),
+        "active_run_dir": None,
+        "target": target.strip(),
+        "model": model.strip(),
+        "max_iter": int(max_iter),
+        "stdout_log": str(stdout_log),
+        "stderr_log": str(stderr_log),
+    }
+    _write_lock(lock_info)
 
-    active_run_dir = _detect_new_run_dir(existing_dirs, time.time()) or _find_run_dir_after(time.time(), existing_dirs)
+    active_run_dir = _detect_new_run_dir(existing_dirs, started_at) or _find_run_dir_after(started_at, existing_dirs)
+    if active_run_dir:
+        lock_info["active_run_dir"] = str(active_run_dir)
+        _write_lock(lock_info)
+        _write_run_state(
+            active_run_dir,
+            status="running",
+            pid=process.pid,
+            started_at=started_at,
+            target=target.strip(),
+            model=model.strip(),
+            max_iter=int(max_iter),
+            run_json_path=_latest_run_json_in_dir(active_run_dir),
+        )
     run_json_path = _latest_run_json_in_dir(active_run_dir) if active_run_dir else None
     run_data = _safe_read_json(run_json_path) if run_json_path else None
     status_text = "Run in progress..." if run_json_path else "Run started. Waiting for run artifacts..."
