@@ -1471,6 +1471,372 @@ def build_molecule_view(run_dir_str: str, run_json_str: str, iteration: int, mol
         return smiles, f"<div>2D viewer requires RDKit.</div><div style='color:#9ca3af;font-size:12px;'>{e}</div>"
 
 
+def _selected_smiles(run_dir_str: str, run_json_str: str, iteration: int, mol_index: int) -> Optional[str]:
+    run_dir = _resolve_run_dir(run_dir_str, run_json_str)
+    if not run_dir:
+        return None
+    mem = _load_memory(run_dir)
+    if not mem:
+        return None
+    pool_ids = _iteration_pool_ids(mem)
+    if not pool_ids:
+        return None
+    iteration = max(0, min(int(iteration), len(pool_ids) - 1))
+    pool_id = pool_ids[iteration]
+    df = mem.stream.get(pool_id, {}).get("data")
+    if df is None or "SMILES" not in df.columns or len(df) == 0:
+        return None
+    mol_index = max(0, min(int(mol_index), len(df) - 1))
+    return str(df.iloc[mol_index]["SMILES"])
+
+
+def _smiles_to_3d_molblock(smiles: str) -> Optional[str]:
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        mol = Chem.AddHs(mol)
+        params = AllChem.ETKDGv3()
+        params.randomSeed = 0xC0FFEE
+        embed = AllChem.EmbedMolecule(mol, params)
+        if embed != 0:
+            # fallback embed
+            embed = AllChem.EmbedMolecule(mol, randomSeed=0xC0FFEE)
+            if embed != 0:
+                return None
+        AllChem.UFFOptimizeMolecule(mol, maxIters=500)
+        return Chem.MolToMolBlock(mol)
+    except Exception:
+        return None
+
+
+def _extract_pdbqt_pose(model_text: str, pose_index: int) -> Optional[str]:
+    pose_index = max(1, int(pose_index or 1))
+    blocks = re.findall(r"(?ms)^MODEL\s+\d+.*?^ENDMDL\s*$", model_text)
+    if not blocks:
+        return model_text if pose_index == 1 else None
+    idx = pose_index - 1
+    if idx >= len(blocks):
+        return None
+    return blocks[idx]
+
+
+def _count_pdbqt_poses(model_text: str) -> int:
+    blocks = re.findall(r"(?ms)^MODEL\s+\d+.*?^ENDMDL\s*$", model_text)
+    return len(blocks)
+
+
+def _pdbqt_block_to_pdb(block_text: str) -> str:
+    """Convert a pdbqt pose block to pdb lines for more reliable 3Dmol rendering."""
+    out_lines: List[str] = []
+    for line in block_text.splitlines():
+        if not (line.startswith("ATOM") or line.startswith("HETATM")):
+            continue
+        record = line[0:6].strip() or "ATOM"
+        try:
+            serial = int((line[6:11] or "").strip())
+        except Exception:
+            serial = len(out_lines) + 1
+        atom_name = (line[12:16] or "").strip()[:4] or "C"
+        res_name = (line[17:20] or "").strip()[:3] or "LIG"
+        chain = (line[21:22] or "").strip() or "A"
+        try:
+            res_seq = int((line[22:26] or "").strip())
+        except Exception:
+            res_seq = 1
+        try:
+            x = float((line[30:38] or "").strip())
+            y = float((line[38:46] or "").strip())
+            z = float((line[46:54] or "").strip())
+        except Exception:
+            # fallback for non-standard spacing
+            parts = line.split()
+            # ATOM serial name res [chain] resSeq x y z occ bfac charge atomType
+            if len(parts) < 8:
+                continue
+            # detect chain token by checking whether parts[4] is alpha
+            has_chain = len(parts) > 9 and parts[4].isalpha() and len(parts[4]) <= 2
+            try:
+                if has_chain:
+                    chain = parts[4][:1]
+                    res_seq = int(parts[5])
+                    x = float(parts[6]); y = float(parts[7]); z = float(parts[8])
+                else:
+                    res_seq = int(parts[4])
+                    x = float(parts[5]); y = float(parts[6]); z = float(parts[7])
+            except Exception:
+                continue
+        try:
+            occ = float((line[54:60] or "").strip())
+        except Exception:
+            occ = 1.0
+        try:
+            bfac = float((line[60:66] or "").strip())
+        except Exception:
+            bfac = 0.0
+
+        parts = line.split()
+        atom_type = parts[-1].strip().upper() if parts else ""
+        element_map = {
+            "OA": "O",
+            "NA": "N",
+            "SA": "S",
+            "HD": "H",
+            "A": "C",
+        }
+        element = element_map.get(atom_type, atom_type[:2] if atom_type else "")
+        if not element or not re.match(r"^[A-Z][A-Z]?$", element):
+            element = re.sub(r"[^A-Za-z]", "", atom_name)[:2].strip().upper() or "C"
+        pdb_line = (
+            f"{record:<6}{serial:>5} "
+            f"{atom_name:<4} "
+            f"{res_name:>3} "
+            f"{chain:1}{res_seq:>4}    "
+            f"{x:>8.3f}{y:>8.3f}{z:>8.3f}"
+            f"{occ:>6.2f}{bfac:>6.2f}          "
+            f"{element:>2}"
+        )
+        out_lines.append(pdb_line)
+    if out_lines:
+        out_lines.append("END")
+    return "\n".join(out_lines)
+
+
+def _build_3d_html(
+    model_text: str,
+    model_type: str,
+    style: str,
+    ligand_color: str = "spectrum",
+    receptor_text: Optional[str] = None,
+    receptor_type: str = "pdb",
+    receptor_style: str = "cartoon",
+    receptor_color: str = "#94a3b8",
+) -> str:
+    view_id = f"mol3d_{int(time.time() * 1000)}"
+    model_js = json.dumps(model_text)
+    color_scheme_values = {"spectrum", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"}
+
+    def _style_js(rep: str, color_value: str, *, radius: float, linewidth: float, scale: float, opacity: float = 1.0) -> str:
+        rep = (rep or "stick").strip().lower()
+        color_value = (color_value or "spectrum").strip()
+        is_scheme = color_value in color_scheme_values
+        if rep == "cartoon":
+            if color_value == "spectrum":
+                return f"{{cartoon:{{color:'spectrum',opacity:{opacity:.3f}}}}}"
+            if is_scheme:
+                return f"{{cartoon:{{colorscheme:'{color_value}',opacity:{opacity:.3f}}}}}"
+            return f"{{cartoon:{{color:'{color_value}',opacity:{opacity:.3f}}}}}"
+        if rep == "line":
+            if is_scheme:
+                return f"{{line:{{linewidth:{linewidth},colorscheme:'{color_value}'}}}}"
+            return f"{{line:{{linewidth:{linewidth},color:'{color_value}'}}}}"
+        if rep == "sphere":
+            if is_scheme:
+                return f"{{sphere:{{scale:{scale},colorscheme:'{color_value}'}}}}"
+            return f"{{sphere:{{scale:{scale},color:'{color_value}'}}}}"
+        # stick default
+        if is_scheme:
+            return f"{{stick:{{radius:{radius},colorscheme:'{color_value}'}}}}"
+        return f"{{stick:{{radius:{radius},color:'{color_value}'}}}}"
+
+    ligand_style_js = _style_js(style, ligand_color, radius=0.18, linewidth=1.5, scale=0.28)
+    receptor_style_js = _style_js(
+        receptor_style,
+        receptor_color,
+        radius=0.14,
+        linewidth=1.2,
+        scale=0.22,
+        opacity=0.55,
+    )
+
+    # Render inside an iframe because Gradio may sanitize/ignore <script> in raw HTML blocks.
+    receptor_js = json.dumps(receptor_text) if receptor_text else "null"
+    iframe_doc = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body {{ margin:0; padding:0; background:#fff; font-family:Arial,sans-serif; }}
+    #{view_id} {{ width:100%; height:520px; }}
+    #err {{ color:#7f1d1d; padding:12px; font-size:14px; }}
+  </style>
+</head>
+<body>
+  <div id="{view_id}"></div>
+  <div id="err"></div>
+  <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js"></script>
+  <script>
+    (function() {{
+      const err = document.getElementById("err");
+      function fail(msg) {{ err.textContent = msg; }}
+      try {{
+        if (!window.$3Dmol) {{
+          fail("3Dmol.js failed to load (CDN blocked).");
+          return;
+        }}
+        const el = document.getElementById("{view_id}");
+        const v = window.$3Dmol.createViewer(el, {{ backgroundColor: "white" }});
+        const receptorText = {receptor_js};
+        if (receptorText) {{
+          const rec = v.addModel(receptorText, "{receptor_type}");
+          rec.setStyle({{}}, {receptor_style_js});
+        }}
+        const lig = v.addModel({model_js}, "{model_type}");
+        lig.setStyle({{}}, {ligand_style_js});
+        v.zoomTo();
+        v.render();
+      }} catch (e) {{
+        fail("3D viewer failed: " + (e && e.message ? e.message : String(e)));
+      }}
+    }})();
+  </script>
+</body>
+</html>
+"""
+    data_uri = "data:text/html;charset=utf-8," + urllib.parse.quote(iframe_doc)
+    return (
+        "<iframe "
+        f"src='{data_uri}' "
+        "style='width:100%;height:540px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;' "
+        "sandbox='allow-scripts allow-same-origin'></iframe>"
+    )
+
+
+def render_3d_viewer(
+    source_mode: str,
+    run_dir_str: str,
+    run_json_str: str,
+    iteration: int,
+    mol_index: int,
+    structure_file,
+    style: str,
+    ligand_color: str,
+    pose_index: int,
+    receptor_file,
+    receptor_style: str,
+    receptor_color: str,
+) -> Tuple[str, str, str]:
+    def _pose_badge(text: str) -> str:
+        return (
+            "<div style='display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #d1d5db;"
+            "border-radius:999px;background:#f8fafc;font-weight:700;color:#0f172a;'>"
+            f"{text}</div>"
+        )
+
+    source_mode = (source_mode or "").strip().lower()
+    if source_mode.startswith("current"):
+        smiles = _selected_smiles(run_dir_str, run_json_str, int(iteration), int(mol_index))
+        if not smiles:
+            return "No current molecule is available yet.", "", _pose_badge("Current molecule")
+        mol_block = _smiles_to_3d_molblock(smiles)
+        if not mol_block:
+            return "Could not generate 3D coordinates from current SMILES.", "", _pose_badge("Current molecule")
+        html = _build_3d_html(
+            mol_block,
+            "sdf",
+            style or "stick",
+            ligand_color=ligand_color or "spectrum",
+            receptor_style=receptor_style or "cartoon",
+            receptor_color=receptor_color or "#94a3b8",
+        )
+        return (
+            f"Rendered current molecule (iteration {iteration}, index {mol_index}).",
+            html,
+            _pose_badge("Current molecule"),
+        )
+
+    if structure_file is None:
+        return "Upload a .pdb, .sdf, .mol2, or .pdbqt file first.", "", _pose_badge("No file loaded")
+    path = Path(structure_file.name)
+    ext = path.suffix.lower()
+    model_type_map = {".pdb": "pdb", ".sdf": "sdf", ".mol2": "mol2", ".pdbqt": "pdbqt"}
+    model_type = model_type_map.get(ext)
+    original_model_type = model_type
+    if not model_type:
+        return "Unsupported file type. Use .pdb, .sdf, .mol2, or .pdbqt.", "", _pose_badge("Unsupported file")
+    try:
+        text = path.read_text(errors="ignore")
+    except Exception as e:
+        return f"Could not read uploaded file: {e}", "", _pose_badge("Read error")
+    if not text.strip():
+        return "Uploaded file is empty.", "", _pose_badge("Empty file")
+    pose_total = None
+    if original_model_type == "pdbqt":
+        pose_total = _count_pdbqt_poses(text)
+        pose_text = _extract_pdbqt_pose(text, int(pose_index or 1))
+        if not pose_text:
+            if pose_total:
+                return (
+                    f"Pose {pose_index} not found in pdbqt (available: 1-{pose_total}).",
+                    "",
+                    _pose_badge(f"Pose {int(max(1, min(int(pose_index or 1), pose_total)))}/{pose_total}"),
+                )
+            return f"Pose {pose_index} not found in pdbqt.", "", _pose_badge("Pose not found")
+        # 3Dmol parsing is more reliable on plain PDB than full pdbqt pose blocks.
+        pdb_text = _pdbqt_block_to_pdb(pose_text)
+        if pdb_text:
+            text = pdb_text
+            model_type = "pdb"
+        else:
+            text = pose_text
+
+    receptor_text = None
+    receptor_model_type = "pdb"
+    if receptor_file is not None:
+        receptor_path = Path(receptor_file.name)
+        try:
+            receptor_text = receptor_path.read_text(errors="ignore")
+            receptor_ext = receptor_path.suffix.lower()
+            receptor_model_type = {
+                ".pdb": "pdb",
+                ".pdbqt": "pdbqt",
+                ".mol2": "mol2",
+            }.get(receptor_ext, "pdb")
+            if receptor_model_type == "pdbqt":
+                receptor_pdb_text = _pdbqt_block_to_pdb(receptor_text)
+                if receptor_pdb_text:
+                    receptor_text = receptor_pdb_text
+                    receptor_model_type = "pdb"
+        except Exception:
+            receptor_text = None
+
+    html = _build_3d_html(
+        text,
+        model_type,
+        style or "stick",
+        ligand_color=ligand_color or "spectrum",
+        receptor_text=receptor_text,
+        receptor_type=receptor_model_type,
+        receptor_style=receptor_style or "cartoon",
+        receptor_color=receptor_color or "#94a3b8",
+    )
+    if original_model_type == "pdbqt":
+        if pose_total:
+            pose_i = int(max(1, min(int(pose_index or 1), pose_total)))
+            return f"Rendered uploaded {ext} file (pose {pose_i} of {pose_total}).", html, _pose_badge(f"Pose {pose_i}/{pose_total}")
+        return f"Rendered uploaded {ext} file (pose {int(pose_index or 1)}).", html, _pose_badge(f"Pose {int(pose_index or 1)}")
+    return f"Rendered uploaded {ext} file.", html, _pose_badge("Single structure")
+
+
+def _shift_pose_index(structure_file, pose_index: int, delta: int) -> int:
+    current = max(1, int(pose_index or 1))
+    if structure_file is None:
+        return max(1, current + delta)
+    try:
+        path = Path(structure_file.name)
+        if path.suffix.lower() != ".pdbqt":
+            return max(1, current + delta)
+        text = path.read_text(errors="ignore")
+        n = _count_pdbqt_poses(text)
+        if n <= 0:
+            return max(1, current + delta)
+        return max(1, min(n, current + delta))
+    except Exception:
+        return max(1, current + delta)
+
+
 def build_molecule_table(run_dir_str: str, run_json_str: str, iteration: int, max_rows: Optional[int] = None) -> pd.DataFrame:
     run_dir = _resolve_run_dir(run_dir_str, run_json_str)
     if not run_dir:
@@ -1977,6 +2343,55 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         smiles_text = gr.Textbox(label="SMILES", interactive=False)
                         mol_svg = gr.HTML(label="2D structure")
 
+        with gr.Tab("3D Viewer"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    viewer3d_source = gr.Dropdown(
+                        choices=["Current selection (from Results)", "Upload structure file"],
+                        value="Current selection (from Results)",
+                        label="Source",
+                    )
+                    viewer3d_style = gr.Dropdown(
+                        choices=["stick", "line", "sphere", "cartoon"],
+                        value="stick",
+                        label="Ligand style",
+                    )
+                    viewer3d_color = gr.Dropdown(
+                        choices=["spectrum", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"],
+                        value="spectrum",
+                        label="Ligand color",
+                    )
+                    viewer3d_file = gr.File(
+                        label="Upload structure (.pdb, .sdf, .mol2, .pdbqt)",
+                        file_types=[".pdb", ".sdf", ".mol2", ".pdbqt"],
+                    )
+                    with gr.Row():
+                        viewer3d_prev = gr.Button("Prev pose", size="sm")
+                        viewer3d_next = gr.Button("Next pose", size="sm")
+                    viewer3d_pose = gr.Number(value=1, precision=0, label="Pose number (for pdbqt)")
+                    viewer3d_receptor = gr.File(
+                        label="Optional receptor (.pdb, .pdbqt, .mol2) for overlay",
+                        file_types=[".pdb", ".pdbqt", ".mol2"],
+                    )
+                    viewer3d_receptor_style = gr.Dropdown(
+                        choices=["cartoon", "stick", "line", "sphere"],
+                        value="cartoon",
+                        label="Receptor style",
+                    )
+                    viewer3d_receptor_color = gr.Dropdown(
+                        choices=["#94a3b8", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"],
+                        value="#94a3b8",
+                        label="Receptor color",
+                    )
+                    viewer3d_render = gr.Button("Render 3D")
+                    viewer3d_status = gr.Textbox(label="Viewer status", interactive=False)
+                with gr.Column(scale=2):
+                    viewer3d_badge = gr.HTML(
+                        label="Pose",
+                        value="<div style='display:inline-flex;align-items:center;padding:6px 10px;border:1px solid #d1d5db;border-radius:999px;background:#f8fafc;font-weight:700;color:#0f172a;'>No structure loaded</div>",
+                    )
+                    viewer3d_html = gr.HTML(label="3D structure")
+
         with gr.Tab("Trends"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -2240,6 +2655,90 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         fn=build_report_file,
         inputs=[run_dir_state, run_json_state, gr.State("csv")],
         outputs=[report_file],
+    )
+    viewer3d_render.click(
+        fn=render_3d_viewer,
+        inputs=[
+            viewer3d_source,
+            run_dir_state,
+            run_json_state,
+            iteration_select_state,
+            mol_index_state,
+            viewer3d_file,
+            viewer3d_style,
+            viewer3d_color,
+            viewer3d_pose,
+            viewer3d_receptor,
+            viewer3d_receptor_style,
+            viewer3d_receptor_color,
+        ],
+        outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
+    )
+    prev_evt = viewer3d_prev.click(
+        fn=_shift_pose_index,
+        inputs=[viewer3d_file, viewer3d_pose, gr.State(-1)],
+        outputs=[viewer3d_pose],
+        queue=False,
+    )
+    prev_evt.then(
+        fn=render_3d_viewer,
+        inputs=[
+            viewer3d_source,
+            run_dir_state,
+            run_json_state,
+            iteration_select_state,
+            mol_index_state,
+            viewer3d_file,
+            viewer3d_style,
+            viewer3d_color,
+            viewer3d_pose,
+            viewer3d_receptor,
+            viewer3d_receptor_style,
+            viewer3d_receptor_color,
+        ],
+        outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
+    )
+    next_evt = viewer3d_next.click(
+        fn=_shift_pose_index,
+        inputs=[viewer3d_file, viewer3d_pose, gr.State(1)],
+        outputs=[viewer3d_pose],
+        queue=False,
+    )
+    next_evt.then(
+        fn=render_3d_viewer,
+        inputs=[
+            viewer3d_source,
+            run_dir_state,
+            run_json_state,
+            iteration_select_state,
+            mol_index_state,
+            viewer3d_file,
+            viewer3d_style,
+            viewer3d_color,
+            viewer3d_pose,
+            viewer3d_receptor,
+            viewer3d_receptor_style,
+            viewer3d_receptor_color,
+        ],
+        outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
+    )
+    viewer3d_pose.change(
+        fn=render_3d_viewer,
+        inputs=[
+            viewer3d_source,
+            run_dir_state,
+            run_json_state,
+            iteration_select_state,
+            mol_index_state,
+            viewer3d_file,
+            viewer3d_style,
+            viewer3d_color,
+            viewer3d_pose,
+            viewer3d_receptor,
+            viewer3d_receptor_style,
+            viewer3d_receptor_color,
+        ],
+        outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
     )
 
 
