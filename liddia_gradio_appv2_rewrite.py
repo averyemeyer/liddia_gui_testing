@@ -1745,6 +1745,28 @@ def _count_pdbqt_poses(model_text: str) -> int:
     return len(blocks)
 
 
+def _extract_pdbqt_vina_score(block_text: str) -> Optional[float]:
+    """Extract affinity (first numeric value) from 'REMARK VINA RESULT'."""
+    if not block_text:
+        return None
+    for line in block_text.splitlines():
+        if "REMARK VINA RESULT" not in line.upper():
+            continue
+        match = re.search(r"REMARK\s+VINA\s+RESULT\s*:\s*([-\d\.eE+]+)", line, flags=re.IGNORECASE)
+        if match:
+            try:
+                return float(match.group(1))
+            except Exception:
+                return None
+        # fallback: first parseable number on the line
+        for tok in line.replace(":", " ").split():
+            try:
+                return float(tok)
+            except Exception:
+                continue
+    return None
+
+
 def _pdbqt_block_to_pdb(block_text: str) -> str:
     """Convert a pdbqt pose block to pdb lines for more reliable 3Dmol rendering."""
     out_lines: List[str] = []
@@ -1829,11 +1851,20 @@ def _build_3d_html(
     receptor_text: Optional[str] = None,
     receptor_type: str = "pdb",
     receptor_style: str = "cartoon",
-    receptor_color: str = "#94a3b8",
+    receptor_color: str = "#3b82f6",
+    receptor_opacity: float = 0.80,
 ) -> str:
     view_id = f"mol3d_{int(time.time() * 1000)}"
     model_js = json.dumps(model_text)
     color_scheme_values = {"spectrum", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"}
+    surface_color_map = {
+        "spectrum": "#60a5fa",
+        "greenCarbon": "#22c55e",
+        "cyanCarbon": "#06b6d4",
+        "orangeCarbon": "#f97316",
+        "magentaCarbon": "#d946ef",
+        "whiteCarbon": "#e5e7eb",
+    }
 
     def _style_js(rep: str, color_value: str, *, radius: float, linewidth: float, scale: float, opacity: float = 1.0) -> str:
         rep = (rep or "stick").strip().lower()
@@ -1858,18 +1889,30 @@ def _build_3d_html(
             return f"{{stick:{{radius:{radius},colorscheme:'{color_value}'}}}}"
         return f"{{stick:{{radius:{radius},color:'{color_value}'}}}}"
 
-    ligand_style_js = _style_js(style, ligand_color, radius=0.18, linewidth=1.5, scale=0.28)
+    ligand_style_name = (style or "stick").strip().lower()
+    receptor_style_name = (receptor_style or "cartoon").strip().lower()
+    ligand_is_surface = ligand_style_name == "surface"
+    receptor_is_surface = receptor_style_name == "surface"
+
+    ligand_style_js = _style_js(ligand_style_name if not ligand_is_surface else "stick", ligand_color, radius=0.18, linewidth=1.5, scale=0.28)
+    receptor_opacity = max(0.05, min(1.0, float(receptor_opacity or 0.80)))
     receptor_style_js = _style_js(
-        receptor_style,
+        receptor_style_name if not receptor_is_surface else "cartoon",
         receptor_color,
         radius=0.14,
         linewidth=1.2,
         scale=0.22,
-        opacity=0.55,
+        opacity=receptor_opacity,
     )
+    ligand_surface_color = surface_color_map.get((ligand_color or "").strip(), ligand_color or "#60a5fa")
+    receptor_surface_color = surface_color_map.get((receptor_color or "").strip(), receptor_color or "#3b82f6")
 
     # Render inside an iframe because Gradio may sanitize/ignore <script> in raw HTML blocks.
     receptor_js = json.dumps(receptor_text) if receptor_text else "null"
+    ligand_is_surface_js = "true" if ligand_is_surface else "false"
+    receptor_is_surface_js = "true" if receptor_is_surface else "false"
+    ligand_surface_color_js = json.dumps(ligand_surface_color)
+    receptor_surface_color_js = json.dumps(receptor_surface_color)
     iframe_doc = f"""<!doctype html>
 <html>
 <head>
@@ -1898,10 +1941,18 @@ def _build_3d_html(
         const receptorText = {receptor_js};
         if (receptorText) {{
           const rec = v.addModel(receptorText, "{receptor_type}");
-          rec.setStyle({{}}, {receptor_style_js});
+          if ({receptor_is_surface_js}) {{
+            v.addSurface(window.$3Dmol.SurfaceType.VDW, {{opacity:{receptor_opacity:.3f}, color:{receptor_surface_color_js}}}, {{model: rec}});
+          }} else {{
+            rec.setStyle({{}}, {receptor_style_js});
+          }}
         }}
         const lig = v.addModel({model_js}, "{model_type}");
-        lig.setStyle({{}}, {ligand_style_js});
+        if ({ligand_is_surface_js}) {{
+          v.addSurface(window.$3Dmol.SurfaceType.VDW, {{opacity:0.85, color:{ligand_surface_color_js}}}, {{model: lig}});
+        }} else {{
+          lig.setStyle({{}}, {ligand_style_js});
+        }}
         v.zoomTo();
         v.render();
       }} catch (e) {{
@@ -1934,6 +1985,7 @@ def render_3d_viewer(
     receptor_file,
     receptor_style: str,
     receptor_color: str,
+    receptor_opacity: float,
 ) -> Tuple[str, str, str]:
     def _pose_badge(text: str) -> str:
         return (
@@ -1956,7 +2008,8 @@ def render_3d_viewer(
             style or "stick",
             ligand_color=ligand_color or "spectrum",
             receptor_style=receptor_style or "cartoon",
-            receptor_color=receptor_color or "#94a3b8",
+            receptor_color=receptor_color or "#3b82f6",
+            receptor_opacity=float(receptor_opacity or 0.80),
         )
         return (
             f"Rendered current molecule (iteration {iteration}, index {mol_index}).",
@@ -1980,6 +2033,7 @@ def render_3d_viewer(
     if not text.strip():
         return "Uploaded file is empty.", "", _pose_badge("Empty file")
     pose_total = None
+    vina_score = None
     if original_model_type == "pdbqt":
         pose_total = _count_pdbqt_poses(text)
         pose_text = _extract_pdbqt_pose(text, int(pose_index or 1))
@@ -1991,6 +2045,7 @@ def render_3d_viewer(
                     _pose_badge(f"Pose {int(max(1, min(int(pose_index or 1), pose_total)))}/{pose_total}"),
                 )
             return f"Pose {pose_index} not found in pdbqt.", "", _pose_badge("Pose not found")
+        vina_score = _extract_pdbqt_vina_score(pose_text)
         # 3Dmol parsing is more reliable on plain PDB than full pdbqt pose blocks.
         pdb_text = _pdbqt_block_to_pdb(pose_text)
         if pdb_text:
@@ -2027,13 +2082,18 @@ def render_3d_viewer(
         receptor_text=receptor_text,
         receptor_type=receptor_model_type,
         receptor_style=receptor_style or "cartoon",
-        receptor_color=receptor_color or "#94a3b8",
+        receptor_color=receptor_color or "#3b82f6",
+        receptor_opacity=float(receptor_opacity or 0.80),
     )
     if original_model_type == "pdbqt":
         if pose_total:
             pose_i = int(max(1, min(int(pose_index or 1), pose_total)))
-            return f"Rendered uploaded {ext} file (pose {pose_i} of {pose_total}).", html, _pose_badge(f"Pose {pose_i}/{pose_total}")
-        return f"Rendered uploaded {ext} file (pose {int(pose_index or 1)}).", html, _pose_badge(f"Pose {int(pose_index or 1)}")
+            score_suffix = f" Vina: {vina_score:.2f}" if vina_score is not None else ""
+            badge = f"Pose {pose_i}/{pose_total}" + (f" • Vina {vina_score:.2f}" if vina_score is not None else "")
+            return f"Rendered uploaded {ext} file (pose {pose_i} of {pose_total}).{score_suffix}", html, _pose_badge(badge)
+        score_suffix = f" Vina: {vina_score:.2f}" if vina_score is not None else ""
+        badge = f"Pose {int(pose_index or 1)}" + (f" • Vina {vina_score:.2f}" if vina_score is not None else "")
+        return f"Rendered uploaded {ext} file (pose {int(pose_index or 1)}).{score_suffix}", html, _pose_badge(badge)
     return f"Rendered uploaded {ext} file.", html, _pose_badge("Single structure")
 
 
@@ -2561,53 +2621,71 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         mol_svg = gr.HTML(label="2D structure")
 
         with gr.Tab("3D Viewer"):
+            gr.HTML(
+                """
+<style>
+#viewer3d_ligand, #viewer3d_receptor {
+  min-height: 48px !important;
+}
+#viewer3d_ligand .file-preview, #viewer3d_receptor .file-preview,
+#viewer3d_ligand .empty, #viewer3d_receptor .empty {
+  min-height: 40px !important;
+  height: 40px !important;
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+</style>
+"""
+            )
             with gr.Row():
                 with gr.Column(scale=1):
-                    viewer3d_source = gr.Dropdown(
-                        choices=["Current selection (from Results)", "Upload structure file"],
-                        value="Current selection (from Results)",
-                        label="Source",
-                    )
-                    viewer3d_style = gr.Dropdown(
-                        choices=["stick", "line", "sphere", "cartoon"],
-                        value="stick",
-                        label="Ligand style",
-                    )
-                    viewer3d_color = gr.Dropdown(
-                        choices=["spectrum", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"],
-                        value="spectrum",
-                        label="Ligand color",
-                    )
+                    viewer3d_style = gr.State("stick")
+                    viewer3d_receptor_style = gr.State("surface")
                     viewer3d_file = gr.File(
-                        label="Upload structure (.pdb, .sdf, .mol2, .pdbqt)",
+                        label="Ligand file (.pdb, .sdf, .mol2, .pdbqt)",
                         file_types=[".pdb", ".sdf", ".mol2", ".pdbqt"],
+                        elem_id="viewer3d_ligand",
                     )
-                    with gr.Row():
-                        viewer3d_prev = gr.Button("Prev pose", size="sm")
-                        viewer3d_next = gr.Button("Next pose", size="sm")
-                    viewer3d_pose = gr.Number(value=1, precision=0, label="Pose number (for pdbqt)")
                     viewer3d_receptor = gr.File(
-                        label="Optional receptor (.pdb, .pdbqt, .mol2) for overlay",
+                        label="Pocket/Receptor file (.pdb, .pdbqt, .mol2)",
                         file_types=[".pdb", ".pdbqt", ".mol2"],
-                    )
-                    viewer3d_receptor_style = gr.Dropdown(
-                        choices=["cartoon", "stick", "line", "sphere"],
-                        value="cartoon",
-                        label="Receptor style",
-                    )
-                    viewer3d_receptor_color = gr.Dropdown(
-                        choices=["#94a3b8", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"],
-                        value="#94a3b8",
-                        label="Receptor color",
+                        elem_id="viewer3d_receptor",
                     )
                     viewer3d_render = gr.Button("Render 3D")
-                    viewer3d_status = gr.Textbox(label="Viewer status", interactive=False)
+                    with gr.Accordion("Details", open=False):
+                        viewer3d_source = gr.Dropdown(
+                            choices=["Upload structure file", "Current selection (from Results)"],
+                            value="Upload structure file",
+                            label="Source",
+                        )
+                        viewer3d_pose = gr.Number(value=1, precision=0, label="Pose number (for pdbqt)")
+                        viewer3d_color = gr.Dropdown(
+                            choices=["spectrum", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"],
+                            value="spectrum",
+                            label="Ligand color",
+                        )
+                        viewer3d_receptor_color = gr.Dropdown(
+                            choices=["#3b82f6", "#94a3b8", "greenCarbon", "cyanCarbon", "orangeCarbon", "magentaCarbon", "whiteCarbon"],
+                            value="#3b82f6",
+                            label="Pocket color",
+                        )
+                        viewer3d_receptor_opacity = gr.Slider(
+                            minimum=0.05,
+                            maximum=1.0,
+                            step=0.05,
+                            value=0.80,
+                            label="Pocket opacity",
+                        )
+                        viewer3d_status = gr.Textbox(label="Viewer status", interactive=False)
                 with gr.Column(scale=2):
                     viewer3d_badge = gr.HTML(
                         label="Pose",
                         value="<div style='display:inline-flex;align-items:center;padding:6px 10px;border:1px solid #d1d5db;border-radius:999px;background:#f8fafc;font-weight:700;color:#0f172a;'>No structure loaded</div>",
                     )
                     viewer3d_html = gr.HTML(label="3D structure")
+                    with gr.Row():
+                        viewer3d_prev = gr.Button("◀ Previous pose", size="sm", variant="secondary")
+                        viewer3d_next = gr.Button("Next pose ▶", size="sm", variant="secondary")
 
         with gr.Tab("Trends"):
             with gr.Row():
@@ -2888,6 +2966,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
             viewer3d_receptor,
             viewer3d_receptor_style,
             viewer3d_receptor_color,
+            viewer3d_receptor_opacity,
         ],
         outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
     )
@@ -2912,6 +2991,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
             viewer3d_receptor,
             viewer3d_receptor_style,
             viewer3d_receptor_color,
+            viewer3d_receptor_opacity,
         ],
         outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
     )
@@ -2936,6 +3016,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
             viewer3d_receptor,
             viewer3d_receptor_style,
             viewer3d_receptor_color,
+            viewer3d_receptor_opacity,
         ],
         outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
     )
@@ -2954,6 +3035,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
             viewer3d_receptor,
             viewer3d_receptor_style,
             viewer3d_receptor_color,
+            viewer3d_receptor_opacity,
         ],
         outputs=[viewer3d_status, viewer3d_html, viewer3d_badge],
     )
