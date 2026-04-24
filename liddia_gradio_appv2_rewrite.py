@@ -2,6 +2,7 @@ import json
 import os
 import re
 import io
+import html
 import base64
 import subprocess
 import time
@@ -423,41 +424,94 @@ def build_run_overview(parsed: Dict[str, Any], run_json_path: Optional[Path]) ->
     task = parsed.get("task", {}) or {}
     runtime = parsed.get("runtime", {}) or {}
 
-    lines = []
+    def _fmt_dt(dt_str: Any) -> str:
+        if not dt_str:
+            return "—"
+        try:
+            return datetime.fromisoformat(str(dt_str)).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(dt_str)
+
+    def _short_path(p: Any) -> str:
+        if not p:
+            return "—"
+        text = str(p)
+        parts = text.split("/")
+        if len(parts) <= 3:
+            return text
+        return ".../" + "/".join(parts[-2:])
+
     if _is_idle(parsed):
         status = "IDLE"
     else:
         status = "SUCCESS" if parsed.get("success") else ("CANCELLED" if parsed.get("cancelled") else "RUNNING")
-    lines.append(f"Status: {status}")
-    if task.get("target"):
-        lines.append(f"Target: {task.get('target')}")
-    if parsed.get("model"):
-        lines.append(f"Model: {parsed.get('model')}")
-    if task.get("resource") is not None:
-        lines.append(f"Resource budget: {task.get('resource')}")
-    if task.get("pocket"):
-        lines.append(f"Pocket: {task.get('pocket')}")
-    if run_json_path:
-        lines.append(f"Run JSON: {run_json_path}")
-    if runtime.get("start_time"):
-        lines.append(f"Start: {runtime.get('start_time')}")
-    if runtime.get("end_time"):
-        lines.append(f"End: {runtime.get('end_time')}")
+
+    target = task.get("target") or "Unknown"
+    model = parsed.get("model") or "Unknown"
+    budget = task.get("resource")
+    pocket = task.get("pocket") or "—"
+    run_json_disp = _short_path(run_json_path) if run_json_path else "—"
+
+    start_disp = _fmt_dt(runtime.get("start_time"))
+    end_disp = _fmt_dt(runtime.get("end_time"))
+    runtime_disp = "—"
     if runtime.get("elapsed_seconds") is not None:
         elapsed = float(runtime.get("elapsed_seconds") or 0.0)
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
-        lines.append(f"Runtime: {minutes}m {seconds}s")
+        runtime_disp = f"{minutes}m {seconds}s"
 
     final_pool = parsed.get("final_pool", {}) or {}
+    pool_id = "—"
+    size = "—"
+    diversity = "—"
     if final_pool:
-        pool_id = final_pool.get("pool") or "Unknown"
+        pool_id = final_pool.get("pool") or "—"
         size = final_pool.get("size") or "—"
-        lines.append("Final pool")
-        lines.append(f"- Pool ID: {pool_id}")
-        lines.append(f"- Molecules: {size}")
+        div_val = final_pool.get("diversity")
+        if div_val not in (None, "", "—"):
+            diversity = _fmt_str(div_val)
 
-    return "\n".join(lines)
+    status_lower = str(status).lower()
+    status_class = "status-running"
+    if "idle" in status_lower:
+        status_class = "status-idle"
+    elif "success" in status_lower:
+        status_class = "status-success"
+    elif "fail" in status_lower or "error" in status_lower or parsed.get("error_message"):
+        status_class = "status-failed"
+    elif "cancel" in status_lower or "warn" in status_lower or parsed.get("warning_message"):
+        status_class = "status-warning"
+
+    safe = lambda v: html.escape(str(v if v is not None else "—"))
+    return (
+        "<div class='run-overview-grid'>"
+        "<div class='run-overview-section'>"
+        "<div class='run-overview-title'>Run</div>"
+        f"<div class='run-overview-row'><span class='k'>Status</span><span class='v'><span class='status-pill {status_class}'>{safe(status)}</span></span></div>"
+        f"<div class='run-overview-row'><span class='k'>Target</span><span class='v'>{safe(target)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>Model</span><span class='v'>{safe(model)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>Budget</span><span class='v'>{safe(budget if budget is not None else '—')}</span></div>"
+        "</div>"
+        "<div class='run-overview-section'>"
+        "<div class='run-overview-title'>Files</div>"
+        f"<div class='run-overview-row'><span class='k'>Pocket</span><span class='v'>{safe(pocket)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>Run JSON</span><span class='v mono'>{safe(run_json_disp)}</span></div>"
+        "</div>"
+        "<div class='run-overview-section'>"
+        "<div class='run-overview-title'>Timing</div>"
+        f"<div class='run-overview-row'><span class='k'>Start</span><span class='v'>{safe(start_disp)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>End</span><span class='v'>{safe(end_disp)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>Runtime</span><span class='v'>{safe(runtime_disp)}</span></div>"
+        "</div>"
+        "<div class='run-overview-section'>"
+        "<div class='run-overview-title'>Final Pool</div>"
+        f"<div class='run-overview-row'><span class='k'>Pool ID</span><span class='v'>{safe(pool_id)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>Molecules</span><span class='v'>{safe(size)}</span></div>"
+        f"<div class='run-overview-row'><span class='k'>Diversity</span><span class='v'>{safe(diversity)}</span></div>"
+        "</div>"
+        "</div>"
+    )
 
 
 def build_runtime_markdown(parsed: Dict[str, Any], run_json_path: Optional[Path]) -> str:
@@ -1502,6 +1556,21 @@ def build_report_file(run_dir_str: str, run_json_str: str, report_type: str) -> 
     return file_path
 
 
+def build_report_bundle_file(run_dir_str: str, run_json_str: str) -> Optional[str]:
+    import zipfile
+    txt_path = build_report_file(run_dir_str, run_json_str, "txt")
+    csv_path = build_report_file(run_dir_str, run_json_str, "csv")
+    if not txt_path and not csv_path:
+        return None
+    bundle_path = REPORT_TMP_DIR / f"liddia_report_bundle_{int(time.time())}.zip"
+    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if txt_path and Path(txt_path).exists():
+            zf.write(txt_path, "run_report.txt")
+        if csv_path and Path(csv_path).exists():
+            zf.write(csv_path, "final_pool_metrics.csv")
+    return str(bundle_path)
+
+
 def _load_memory(run_dir: Path):
     mem_candidates = list(run_dir.glob("*_memory.pkl"))
     if not mem_candidates:
@@ -2207,12 +2276,14 @@ def _pool_ids_for_run(run_dir_str: str, run_json_str: str) -> List[str]:
     return _iteration_pool_ids(mem)
 
 
-def update_pool_selector(run_dir_str: str, run_json_str: str):
+def update_pool_selector(run_dir_str: str, run_json_str: str, current_pool: Optional[str] = None):
     pool_ids = _pool_ids_for_run(run_dir_str, run_json_str)
     if not pool_ids:
         return gr.update(choices=[], value=None), gr.update(value=0)
-    # set selector to last pool and iteration to last index (0-based)
-    return gr.update(choices=pool_ids, value=pool_ids[-1]), gr.update(value=max(0, len(pool_ids) - 1))
+    # keep user's selected pool when possible; otherwise default to latest pool
+    selected = current_pool if current_pool in pool_ids else pool_ids[-1]
+    selected_idx = pool_ids.index(selected)
+    return gr.update(choices=pool_ids, value=selected), gr.update(value=selected_idx)
 
 
 def reset_molecule_viewer_state():
@@ -2428,6 +2499,83 @@ def _enrich_parsed_with_memory(parsed: Dict[str, Any], run_dir: Optional[Path]) 
 
 # ---------- UI ----------
 with gr.Blocks(title="LIDDIA GUI v2") as demo:
+    gr.HTML(
+        """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+body, .gradio-container, .gr-block, .gr-form, .gr-markdown, .gr-textbox, .gr-dropdown, .gr-button, .gr-dataframe {
+  font-family: "Manrope", "Inter", "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif !important;
+}
+.gradio-container h1, .gradio-container h2, .gradio-container h3 {
+  font-family: "Manrope", "Inter", "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.005em;
+}
+.gradio-container .tab-nav button {
+  font-weight: 600 !important;
+  border-bottom: 2px solid transparent !important;
+  transition: color .15s ease, border-color .15s ease !important;
+}
+.gradio-container .tab-nav button.selected {
+  color: #4f46e5 !important;
+  border-bottom-color: #4f46e5 !important;
+  font-weight: 800 !important;
+}
+.run-overview-grid {
+  display: grid;
+  gap: 10px;
+}
+.run-overview-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+.run-overview-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-weight: 800;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.run-overview-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px;
+  margin: 2px 0;
+}
+.run-overview-row .k {
+  color: #6b7280;
+  font-weight: 700;
+}
+.run-overview-row .v {
+  color: #111827;
+  font-weight: 600;
+}
+.run-overview-row .mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.status-success { background: #dcfce7; color: #166534; }
+.status-failed { background: #fee2e2; color: #991b1b; }
+.status-warning { background: #fef3c7; color: #92400e; }
+.status-running { background: #e5e7eb; color: #334155; }
+.status-idle { background: #eef2ff; color: #4338ca; }
+.gradio-container {
+  background: #f8fafc !important;
+}
+</style>
+"""
+    )
     gr.Markdown(
         "# LIDDIA GUI v2\n"
         "Local internal research interface for launching runs, monitoring progress, and reviewing results."
@@ -2470,7 +2618,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
 
                 with gr.Column(scale=1):
                     metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False)
-                    monitor_overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
+                    gr.Markdown("### Run overview")
+                    monitor_overview = gr.Markdown()
 
         with gr.Tab("Results"):
             gr.HTML(
@@ -2592,33 +2741,65 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
   min-height: 44px !important;
   height: auto !important;
 }
+
+.results-tight {
+  gap: 12px !important;
+}
+.results-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 12px;
+  box-shadow: 0 1px 6px rgba(15,23,42,0.06);
+}
+.results-header {
+  font-weight: 800;
+  font-size: 18px;
+  color: #0f172a;
+  margin: 0 0 6px 0;
+}
+.results-sub {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0;
+}
+.results-actions {
+  gap: 8px !important;
+}
+.results-actions button {
+  font-weight: 700 !important;
+}
 </style>
 """
             )
             with gr.Column(elem_classes=["results-tight"]):
                 with gr.Row():
                     with gr.Column(scale=1):
-                        overview = gr.Textbox(label="Run overview", lines=10, interactive=False)
-                        runtime_md = gr.Markdown(visible=False)
-                        results_md = gr.Markdown()
-                        report_file = gr.File(label="Download report", elem_id="report-file-output")
-                        report_txt = gr.Button("Generate TXT")
-                        report_csv = gr.Button("Generate CSV")
-                        gr.Markdown("### Load previous run")
-                        run_selector = gr.Dropdown(choices=_get_available_runs(), label="Select run folder", value=None)
-                        load_selected_button = gr.Button("Load selected run")
+                        with gr.Group(elem_classes=["results-card"]):
+                            gr.Markdown("<p class='results-header'>Run Summary</p>")
+                            overview = gr.Markdown()
+                            runtime_md = gr.Markdown(visible=False)
+                            results_md = gr.Markdown(visible=False)
+                            report_file = gr.DownloadButton("Download reports", value=None, variant="secondary", size="sm")
+
+                        with gr.Group(elem_classes=["results-card"]):
+                            gr.Markdown("<p class='results-header'>Load Previous Run</p>")
+                            run_selector = gr.Dropdown(choices=_get_available_runs(), label="Select run folder", value=None)
+                            load_selected_button = gr.Button("Load selected run")
 
                     with gr.Column(scale=2):
-                        gr.Markdown("### Molecule viewer (2D)")
-                        pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
-                        pool_badge = gr.HTML()
-                        with gr.Row():
-                            gr.Markdown("#### Molecule properties")
-                            download_current = gr.DownloadButton("📥 Download current pool", variant="secondary", size="sm")
-                            download_all = gr.DownloadButton("📦 Download all molecule property sets", variant="secondary", size="sm")
-                        mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table", "mol-prop-table"])
-                        smiles_text = gr.Textbox(label="SMILES", interactive=False)
-                        mol_svg = gr.HTML(label="2D structure")
+                        with gr.Group(elem_classes=["results-card"]):
+                            gr.Markdown("<p class='results-header'>Molecule Viewer (2D)</p>")
+                            gr.Markdown("<p class='results-sub'>Select a pool, inspect molecules, and export pool-level properties.</p>")
+                            pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
+                            pool_badge = gr.HTML()
+                            with gr.Row(elem_classes=["results-actions"]):
+                                download_current = gr.DownloadButton("📥 Download current pool", variant="secondary", size="sm")
+                                download_all = gr.DownloadButton("📦 Download all molecule property sets", variant="secondary", size="sm")
+                            mol_table = gr.Dataframe(interactive=True, elem_classes=["resizable-table", "mol-prop-table"])
+                            smiles_text = gr.Textbox(label="SMILES", interactive=False, visible=False)
+                            mol_svg = gr.HTML(label="2D structure", visible=False)
+
 
         with gr.Tab("3D Viewer"):
             gr.HTML(
@@ -2760,7 +2941,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     )
     run_evt.then(
         fn=update_pool_selector,
-        inputs=[run_dir_state, run_json_state],
+        inputs=[run_dir_state, run_json_state, pool_select],
         outputs=[pool_select, iteration_select_state],
     )
     run_evt.then(
@@ -2799,7 +2980,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     )
     refresh_evt.then(
         fn=update_pool_selector,
-        inputs=[run_dir_state, run_json_state],
+        inputs=[run_dir_state, run_json_state, pool_select],
         outputs=[pool_select, iteration_select_state],
     )
     refresh_evt.then(
@@ -2833,7 +3014,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     )
     monitor_tick.then(
         fn=update_pool_selector,
-        inputs=[run_dir_state, run_json_state],
+        inputs=[run_dir_state, run_json_state, pool_select],
         outputs=[pool_select, iteration_select_state],
         show_progress="hidden",
     ).then(
@@ -2872,7 +3053,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     )
     load_evt.then(
         fn=update_pool_selector,
-        inputs=[run_dir_state, run_json_state],
+        inputs=[run_dir_state, run_json_state, pool_select],
         outputs=[pool_select, iteration_select_state],
     )
     load_evt.then(
@@ -2941,14 +3122,9 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         outputs=[metric_trends],
     )
 
-    report_txt.click(
-        fn=build_report_file,
-        inputs=[run_dir_state, run_json_state, gr.State("txt")],
-        outputs=[report_file],
-    )
-    report_csv.click(
-        fn=build_report_file,
-        inputs=[run_dir_state, run_json_state, gr.State("csv")],
+    report_file.click(
+        fn=build_report_bundle_file,
+        inputs=[run_dir_state, run_json_state],
         outputs=[report_file],
     )
     viewer3d_render.click(
