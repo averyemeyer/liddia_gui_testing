@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 from liddia_gui_refactor.liddia_gui.backend import LiddiaV2Backend, RunConfig
 
@@ -15,7 +16,7 @@ def test_v2_backend_builds_base_command():
     )
 
     assert cmd[:8] == [
-        "python",
+        sys.executable,
         "-u",
         "/repo/run.py",
         "--target",

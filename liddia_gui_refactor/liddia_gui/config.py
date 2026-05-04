@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_PY = REPO_ROOT / "run.py"
 LOG_ROOT = REPO_ROOT / "log"
 PDB_DIR = REPO_ROOT / "dataset" / "pdb"
+DRUGS_CSV = REPO_ROOT / "dataset" / "drugs_out.csv"
 REPORT_TMP_DIR = Path(tempfile.gettempdir())
 
 DEFAULT_MODELS = [

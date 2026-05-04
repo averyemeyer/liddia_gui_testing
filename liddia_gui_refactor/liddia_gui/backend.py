@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Any, Protocol
 
 from .config import LOG_ROOT, RUN_PY
@@ -56,7 +57,7 @@ class LiddiaV2Backend:
 
     def build_command(self, config: RunConfig) -> list[str]:
         cmd = [
-            "python",
+            sys.executable,
             "-u",
             str(self.run_py),
             "--target",

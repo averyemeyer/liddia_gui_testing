@@ -81,6 +81,8 @@ def write_run_state(
     model: str | None = None,
     max_iter: int | None = None,
     run_json_path: Path | None = None,
+    stdout_log: str | None = None,
+    stderr_log: str | None = None,
     backend_name: str = "liddia_v2",
 ) -> None:
     """Write a durable per-run status file for reload/recovery/debugging."""
@@ -99,6 +101,8 @@ def write_run_state(
         "max_iter": max_iter,
         "run_dir": str(run_dir),
         "run_json_path": str(run_json_path) if run_json_path else None,
+        "stdout_log": stdout_log,
+        "stderr_log": stderr_log,
     }
     try:
         path.write_text(json.dumps(payload, indent=2))

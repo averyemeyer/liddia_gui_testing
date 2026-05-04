@@ -15,7 +15,7 @@ import gradio as gr
 
 from .backend import RunConfig
 from .config import DEFAULT_MODELS, detect_targets
-from .dashboard import DashboardRender
+from .dashboard import DashboardRender, MonitorRender
 from .io_utils import available_run_dirs, latest_json_in_dir, safe_read_json
 from .molecules import (
     download_all_pools_csv,
@@ -25,8 +25,9 @@ from .molecules import (
 )
 from .reports import build_report_bundle_file
 from .runner import launch_run, recover_active_run
+from .run_state import pid_running, read_lock
 from .trends import apply_metric_filter
-from .ui_components import help_panel
+from .ui_components import help_panel, recovery_card
 from .viewer3d import render_uploaded_structure, shift_pose_index
 
 
@@ -46,35 +47,95 @@ def choose_server_port(host: str = "127.0.0.1", preferred: int = 7960) -> int:
     raise OSError(f"No free local ports found in {preferred}-{preferred + 99}.")
 
 
-def render_snapshot(message: str, run_dir: Path | None, run_json: Path | None, data: dict[str, Any] | None):
-    return DashboardRender.from_snapshot(message, run_dir, run_json, data).as_outputs()
+def render_snapshot(message: str, run_dir: Path | None, run_json: Path | None, data: dict[str, Any] | None) -> DashboardRender:
+    return DashboardRender.from_snapshot(message, run_dir, run_json, data)
+
+
+def render_monitor_snapshot(
+    message: str,
+    run_dir: Path | None,
+    run_json: Path | None,
+    data: dict[str, Any] | None,
+    *,
+    include_logs: bool = False,
+) -> MonitorRender:
+    return MonitorRender.from_snapshot(message, run_dir, run_json, data, include_logs=include_logs)
+
+
+def monitor_outputs(render: MonitorRender) -> tuple[Any, ...]:
+    active = read_lock()
+    return (
+        render.status_text,
+        render.status_html,
+        render.progress_html,
+        render.elapsed_html,
+        render.monitor_overview_html,
+        render.timeline_html,
+        render.monitor_metrics_df,
+        render.errors_html,
+        render.logs_text,
+        recovery_card(active, run_dir=render.run_dir_state, run_json=render.run_json_state, is_running=pid_running(active.pid) if active else False),
+        render.run_dir_state,
+        render.run_json_state,
+    )
+
+
+def review_outputs(render: DashboardRender) -> tuple[Any, ...]:
+    return (
+        render.results_overview_html,
+        render.metrics_df,
+        render.requirements_df,
+        render.raw_json,
+        render.pool_select,
+        render.pool_badge,
+        render.mol_table,
+        render.trend_state,
+        render.trend_plot_component,
+        render.trend_metric_select,
+        render.trend_df,
+        render.run_dir_state,
+        render.run_json_state,
+    )
 
 
 def start_run(target: str, max_iter: int, model: str, api_key: str):
     msg, snap = launch_run(RunConfig(target=target, max_iter=int(max_iter), model=model), api_key)
-    return render_snapshot(msg, snap.run_dir, snap.run_json, snap.data)
+    return monitor_outputs(render_monitor_snapshot(msg, snap.run_dir, snap.run_json, snap.data, include_logs=True))
 
 
-def refresh_active_or_loaded(run_dir_str: str, run_json_str: str):
+def refresh_active_run():
     msg, snap = recover_active_run()
     if snap.run_dir or snap.run_json or snap.data:
-        return render_snapshot(msg, snap.run_dir, snap.run_json, snap.data)
+        return monitor_outputs(render_monitor_snapshot(msg, snap.run_dir, snap.run_json, snap.data))
+    return monitor_outputs(render_monitor_snapshot("No active run.", None, None, None))
 
-    run_json = Path(run_json_str) if run_json_str else None
-    run_dir = Path(run_dir_str) if run_dir_str else None
-    if run_json and run_json.exists():
-        return render_snapshot("Loaded run.", run_json.parent, run_json, safe_read_json(run_json))
-    if run_dir and run_dir.exists():
-        run_json = latest_json_in_dir(run_dir)
-        return render_snapshot("Loaded run.", run_dir, run_json, safe_read_json(run_json))
-    return render_snapshot("No run yet.", None, None, None)
+
+def recover_active_run_with_logs():
+    msg, snap = recover_active_run()
+    if snap.run_dir or snap.run_json or snap.data:
+        return monitor_outputs(render_monitor_snapshot(msg, snap.run_dir, snap.run_json, snap.data, include_logs=True))
+    return monitor_outputs(render_monitor_snapshot("No active run.", None, None, None, include_logs=True))
 
 
 def load_selected_run(folder: str):
     from .config import LOG_ROOT
     run_dir = LOG_ROOT / folder if folder else None
     run_json = latest_json_in_dir(run_dir)
-    return render_snapshot(f"Loaded run: {folder}" if run_json else "No run selected.", run_dir, run_json, safe_read_json(run_json))
+    return review_outputs(render_snapshot(f"Loaded run: {folder}" if run_json else "No run selected.", run_dir, run_json, safe_read_json(run_json)))
+
+
+def review_active_run(active_run_dir_str: str, active_run_json_str: str):
+    run_json = Path(active_run_json_str) if active_run_json_str else None
+    run_dir = Path(active_run_dir_str) if active_run_dir_str else None
+    if run_json and run_json.exists():
+        return review_outputs(render_snapshot("Reviewing active run.", run_json.parent, run_json, safe_read_json(run_json)))
+    if run_dir and run_dir.exists():
+        run_json = latest_json_in_dir(run_dir)
+        return review_outputs(render_snapshot("Reviewing active run.", run_dir, run_json, safe_read_json(run_json)))
+    msg, snap = recover_active_run()
+    if snap.run_dir or snap.run_json or snap.data:
+        return review_outputs(render_snapshot(msg, snap.run_dir, snap.run_json, snap.data))
+    return review_outputs(render_snapshot("No active run to review.", None, None, None))
 
 
 def update_pool_view(run_dir_str: str, run_json_str: str, pool_id: str | None):
@@ -91,8 +152,10 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     </div>
     """)
 
-    run_dir_state = gr.State("")
-    run_json_state = gr.State("")
+    active_run_dir_state = gr.State("")
+    active_run_json_state = gr.State("")
+    review_run_dir_state = gr.State("")
+    review_run_json_state = gr.State("")
 
     with gr.Tabs(elem_classes=["app-shell"]):
         with gr.Tab("Monitor"):
@@ -118,12 +181,14 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     with gr.Accordion("Errors and logs", open=False):
                         errors_html = gr.HTML()
                         logs_text = gr.Textbox(label="CLI stdout/stderr", lines=18, interactive=False)
-                    timer = gr.Timer(2.0)
+                    timer = gr.Timer(10.0)
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Metrics Snapshot</p>")
                     monitor_metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=True, datatype="html", column_widths=["55%", "45%"], max_height=300)
                     gr.Markdown("<p class='section-title'>Run Overview</p>")
                     monitor_overview_html = gr.HTML()
+                    gr.Markdown("<p class='section-title'>Run Recovery</p>")
+                    recovery_html = gr.HTML()
 
         with gr.Tab("Results"):
             with gr.Row():
@@ -135,6 +200,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     from .config import LOG_ROOT
                     run_selector = gr.Dropdown(choices=available_run_dirs(LOG_ROOT), label="Run folder")
                     load_btn = gr.Button("Load selected run")
+                    review_active_btn = gr.Button("Review active run", variant="secondary")
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Molecule Viewer (2D)</p>")
                     gr.Markdown("<p class='helper-text'>Molecule tables and property results appear after a run is loaded or completed.</p>")
@@ -190,7 +256,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 gr.Markdown("<p class='section-title'>Metric Help</p>")
                 gr.HTML(help_panel())
 
-    dashboard_outputs = [
+    monitor_outputs_components = [
         status_text,
         status_html,
         progress_html,
@@ -198,12 +264,17 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         monitor_overview_html,
         timeline_html,
         monitor_metrics_df,
+        errors_html,
+        logs_text,
+        recovery_html,
+        active_run_dir_state,
+        active_run_json_state,
+    ]
+    review_outputs_components = [
         results_overview_html,
         metrics_df,
         requirements_df,
-        errors_html,
         raw_json,
-        logs_text,
         pool_select,
         pool_badge,
         mol_table,
@@ -211,17 +282,18 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         trend_plot_component,
         trend_metric_select,
         trend_df,
-        run_dir_state,
-        run_json_state,
+        review_run_dir_state,
+        review_run_json_state,
     ]
-    run_btn.click(start_run, [target, max_iter, model, api_key], dashboard_outputs)
-    latest_btn.click(refresh_active_or_loaded, [run_dir_state, run_json_state], dashboard_outputs)
-    timer.tick(refresh_active_or_loaded, [run_dir_state, run_json_state], dashboard_outputs, queue=False, show_progress="hidden")
-    load_btn.click(load_selected_run, [run_selector], dashboard_outputs)
-    pool_select.change(update_pool_view, [run_dir_state, run_json_state, pool_select], [pool_badge, mol_table])
-    download_current.click(download_current_pool_csv, [run_dir_state, run_json_state, pool_select], [download_current])
-    download_all.click(download_all_pools_csv, [run_dir_state, run_json_state], [download_all])
-    report_file.click(build_report_bundle_file, [run_dir_state, run_json_state], [report_file])
+    run_btn.click(start_run, [target, max_iter, model, api_key], monitor_outputs_components, queue=False, show_progress="hidden")
+    latest_btn.click(recover_active_run_with_logs, [], monitor_outputs_components, queue=False, show_progress="hidden")
+    timer.tick(refresh_active_run, [], monitor_outputs_components, queue=False, show_progress="hidden")
+    load_btn.click(load_selected_run, [run_selector], review_outputs_components, queue=False, show_progress="hidden")
+    review_active_btn.click(review_active_run, [active_run_dir_state, active_run_json_state], review_outputs_components, queue=False, show_progress="hidden")
+    pool_select.change(update_pool_view, [review_run_dir_state, review_run_json_state, pool_select], [pool_badge, mol_table], queue=False, show_progress="hidden")
+    download_current.click(download_current_pool_csv, [review_run_dir_state, review_run_json_state, pool_select], [download_current], queue=False)
+    download_all.click(download_all_pools_csv, [review_run_dir_state, review_run_json_state], [download_all], queue=False)
+    report_file.click(build_report_bundle_file, [review_run_dir_state, review_run_json_state], [report_file], queue=False)
     render_inputs = [ligand_file, receptor_file, ligand_style, ligand_color, receptor_style, receptor_color, receptor_opacity, pose_number]
     render_3d.click(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
     prev_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(-1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])

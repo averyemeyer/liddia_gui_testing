@@ -16,6 +16,49 @@ from .ui_components import action_timeline, elapsed_panel, error_panel, progress
 
 
 @dataclass(frozen=True)
+class MonitorRender:
+    status_text: str
+    status_html: str
+    progress_html: str
+    elapsed_html: str
+    monitor_overview_html: str
+    timeline_html: str
+    monitor_metrics_df: pd.DataFrame
+    errors_html: str
+    logs_text: str
+    run_dir_state: str
+    run_json_state: str
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        message: str,
+        run_dir: Path | None,
+        run_json: Path | None,
+        data: dict[str, Any] | None,
+        *,
+        include_logs: bool = False,
+    ) -> "MonitorRender":
+        recovered = message.lower().startswith("recovered")
+        run_dir_text = str(run_dir or "")
+        run_json_text = str(run_json or "")
+        parsed = parse_run_data(data)
+        return cls(
+            status_text=message,
+            status_html=status_badge(parsed, recovered=recovered),
+            progress_html=progress(parsed),
+            elapsed_html=elapsed_panel(parsed),
+            monitor_overview_html=run_overview(parsed, run_json),
+            timeline_html=action_timeline(parsed),
+            monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed)),
+            errors_html=error_panel(parsed),
+            logs_text=active_log_text() if include_logs else gr.skip(),
+            run_dir_state=run_dir_text,
+            run_json_state=run_json_text,
+        )
+
+
+@dataclass(frozen=True)
 class DashboardRender:
     status_text: str
     status_html: str

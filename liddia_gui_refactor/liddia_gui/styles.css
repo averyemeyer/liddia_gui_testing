@@ -44,6 +44,7 @@ footer { display:none!important; }
 .empty-panel { border:1px solid var(--line); border-radius:var(--radius-sm); background:#fbfcfe; color:var(--muted); padding:14px; font-size:13px; }
 .error-panel { border:1px solid #fecaca; border-radius:var(--radius-sm); background:#fff7f7; padding:12px; }
 .error-panel pre { white-space:pre-wrap; overflow-wrap:anywhere; color:#991b1b; font-size:12px; margin:0 0 10px; }
+.recovery-card { border:1px solid var(--line); border-radius:8px; background:#fbfcfe; padding:12px; margin-top:12px; }
 .help-panel { border:1px solid var(--line); border-radius:var(--radius-sm); background:#fbfcfe; padding:12px; }
 .monitor-layout { align-items:flex-start; }
 .monitor-layout > .gr-column:first-child { max-width:360px; }

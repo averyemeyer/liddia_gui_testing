@@ -137,6 +137,40 @@ def error_panel(parsed: dict[str, Any]) -> str:
     return "<div class='error-panel'>" + "".join(pieces) + "</div>"
 
 
+def recovery_card(active: Any | None, *, run_dir: str = "", run_json: str = "", is_running: bool = False) -> str:
+    def clean(value: Any) -> str:
+        return html.escape(str(value if value not in (None, "") else "—"))
+
+    if not active:
+        return "<div class='empty-panel'>No active run lock. Completed runs can be loaded from Results.</div>"
+
+    started = "—"
+    try:
+        started = datetime.fromtimestamp(float(active.started_at)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+    status = "RUNNING" if is_running else "RECOVERABLE"
+    css = "status-running" if is_running else "status-info"
+    rows = [
+        ("PID", active.pid),
+        ("Target", active.target),
+        ("Model", active.model),
+        ("Budget", active.max_iter),
+        ("Started", started),
+        ("Run folder", run_dir or active.active_run_dir),
+        ("Run JSON", run_json),
+        ("stdout", active.stdout_log),
+        ("stderr", active.stderr_log),
+    ]
+    body = "".join(f"<div class='k'>{clean(k)}</div><div class='v'>{clean(v)}</div>" for k, v in rows)
+    return (
+        "<div class='recovery-card'>"
+        f"<div class='status-row'><span class='status-badge {css}'>{status}</span><span class='helper-text'>Safe to close this browser tab.</span></div>"
+        f"<div class='label-value-grid'>{body}</div>"
+        "</div>"
+    )
+
+
 def help_panel() -> str:
     metrics = [
         ("Diversity", "Definition placeholder.", "Interpretation placeholder."),
