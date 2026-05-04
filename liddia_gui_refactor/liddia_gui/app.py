@@ -121,7 +121,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     timer = gr.Timer(2.0)
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Metrics Snapshot</p>")
-                    monitor_metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=True, column_widths=["55%", "45%"], max_height=300)
+                    monitor_metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=True, datatype="html", column_widths=["55%", "45%"], max_height=300)
                     gr.Markdown("<p class='section-title'>Run Overview</p>")
                     monitor_overview_html = gr.HTML()
 
@@ -148,7 +148,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         raw_json = gr.Code(label="Latest run JSON", language="json")
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Final Pool Metrics</p>")
-                    metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=False, max_height=320)
+                    metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=False, datatype="html", max_height=320)
                     gr.Markdown("<p class='section-title'>Task Requirements</p>")
                     requirements_df = gr.Dataframe(label="Task requirements", interactive=False, wrap=True, show_label=False, max_height=320)
 

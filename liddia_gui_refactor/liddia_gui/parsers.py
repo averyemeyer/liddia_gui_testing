@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import re
 import json
+import html
 from typing import Any
 
 ANSWER_PATTERN = re.compile(r"Answer:\s*(YES|NO)", re.IGNORECASE)
@@ -96,17 +97,26 @@ def metric_rows(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     final_pool = parsed.get("final_pool") or {}
     rows: list[dict[str, Any]] = []
     if final_pool.get("size") is not None:
-        rows.append({"Metric": "Size", "Min": "—", "Median": final_pool.get("size"), "Max": "—", "Help": "Number of molecules in the selected pool."})
+        rows.append({"Metric": "Size", "Min": "—", "Median": final_pool.get("size"), "Max": "—"})
     if final_pool.get("diversity") is not None:
-        rows.append({"Metric": "Diversity", "Min": "—", "Median": final_pool.get("diversity"), "Max": "—", "Help": "Set-level structural spread; higher is usually better."})
+        rows.append({"Metric": "Diversity", "Min": "—", "Median": final_pool.get("diversity"), "Max": "—"})
     for label, values in (final_pool.get("metrics") or {}).items():
         rows.append({
             "Metric": label,
             "Min": values.get("min", "—"),
             "Median": values.get("median", "—"),
             "Max": values.get("max", "—"),
-            "Help": metric_help(label),
         })
+    return rows
+
+
+def metric_display_rows(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    """Final pool metrics with tooltip-enabled metric labels for the GUI."""
+    rows = []
+    for row in metric_rows(parsed):
+        display = dict(row)
+        display["Metric"] = metric_label_html(str(row.get("Metric", "—")))
+        rows.append(display)
     return rows
 
 
@@ -120,6 +130,15 @@ def compact_metric_rows(parsed: dict[str, Any]) -> list[dict[str, Any]]:
         rows.append({"Metric": "Diversity", "Value": final_pool.get("diversity")})
     for label, values in (final_pool.get("metrics") or {}).items():
         rows.append({"Metric": label, "Value": values.get("median") or values.get("min") or values.get("max") or "—"})
+    return rows
+
+
+def compact_metric_display_rows(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for row in compact_metric_rows(parsed):
+        display = dict(row)
+        display["Metric"] = metric_label_html(str(row.get("Metric", "—")))
+        rows.append(display)
     return rows
 
 
@@ -164,3 +183,13 @@ def metric_help(label: str) -> str:
         "diversity": "Structural spread across the pool; higher is better.",
     }
     return help_by_label.get(normalized, "Metric reported by the current LIDDIA backend.")
+
+
+def metric_label_html(label: str) -> str:
+    return (
+        "<span class='metric-tip' title='"
+        + html.escape(metric_help(label), quote=True)
+        + "'>"
+        + html.escape(label)
+        + "</span>"
+    )

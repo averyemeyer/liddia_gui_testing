@@ -10,7 +10,7 @@ import pandas as pd
 
 from .logs import active_log_text
 from .molecules import enrich_parsed_with_memory, molecule_table, pool_choices, selected_pool_badge
-from .parsers import compact_metric_rows, metric_rows, parse_run_data, raw_json_text, requirements_rows
+from .parsers import compact_metric_display_rows, metric_display_rows, parse_run_data, raw_json_text, requirements_rows
 from .trends import iteration_rollup, metric_choices, trend_plot, trend_rows
 from .ui_components import action_timeline, elapsed_panel, error_panel, progress, run_overview, status_badge
 
@@ -47,7 +47,7 @@ class DashboardRender:
         run_json_text = str(run_json or "")
         parsed = enrich_parsed_with_memory(parse_run_data(data), run_dir_text, run_json_text)
         overview = run_overview(parsed, run_json)
-        metrics = pd.DataFrame(metric_rows(parsed))
+        metrics = pd.DataFrame(metric_display_rows(parsed))
         pool_ids, selected_pool = pool_choices(run_dir_text, run_json_text)
         trend_data = trend_rows(parsed)
         choices = metric_choices(trend_data)
@@ -59,7 +59,7 @@ class DashboardRender:
             elapsed_html=elapsed_panel(parsed),
             monitor_overview_html=overview,
             timeline_html=action_timeline(parsed),
-            monitor_metrics_df=pd.DataFrame(compact_metric_rows(parsed)),
+            monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed)),
             results_overview_html=overview,
             metrics_df=metrics,
             requirements_df=pd.DataFrame(requirements_rows(parsed)),

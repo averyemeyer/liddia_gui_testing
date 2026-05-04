@@ -138,13 +138,63 @@ def error_panel(parsed: dict[str, Any]) -> str:
 
 
 def help_panel() -> str:
-    rows = [
-        ("Vina Score", "Docking estimate; lower values indicate stronger predicted binding."),
-        ("Novelty", "Similarity distance from known target ligands; higher is more novel."),
-        ("Diversity", "How structurally spread out the molecule pool is; higher is broader."),
-        ("QED", "Drug-likeness score from 0 to 1; higher is generally better."),
-        ("SAScore", "Synthetic accessibility estimate; lower is generally easier."),
-        ("Lipinski", "Rule-of-five checks passed; higher means more rules followed."),
+    metrics = [
+        ("Diversity", "Definition placeholder.", "Interpretation placeholder."),
+        ("SAScore", "Definition placeholder.", "Interpretation placeholder."),
+        ("Lipinski", "Definition placeholder.", "Interpretation placeholder."),
+        ("Novelty", "Definition placeholder.", "Interpretation placeholder."),
+        ("Vina Score", "Definition placeholder.", "Interpretation placeholder."),
+        ("QED", "Definition placeholder.", "Interpretation placeholder."),
     ]
-    body = "".join(f"<div class='k'>{html.escape(k)}</div><div class='v'>{html.escape(v)}</div>" for k, v in rows)
-    return f"<div class='help-panel label-value-grid'>{body}</div>"
+    metric_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(metric)}</td>"
+        f"<td>{html.escape(definition)}</td>"
+        f"<td>{html.escape(interpretation)}</td>"
+        "</tr>"
+        for metric, definition, interpretation in metrics
+    )
+    return """
+<div class="help-page">
+  <section class="help-section">
+    <h3>GUI Guide (Placeholder)</h3>
+    <ul>
+      <li><strong>Monitor:</strong> Start runs, watch action/iteration progress, and inspect live status.</li>
+      <li><strong>Results:</strong> Browse pool outputs, molecule properties, and export reports.</li>
+      <li><strong>3D Viewer:</strong> Inspect ligand poses and receptor surfaces.</li>
+      <li><strong>Trends:</strong> Inspect metric behavior across iterations.</li>
+    </ul>
+  </section>
+  <section class="help-section">
+    <h3>Workflow Notes (Placeholder)</h3>
+    <ul>
+      <li>Runs write artifacts to <code>log/&lt;run_id&gt;/</code>.</li>
+      <li><code>*.json</code> stores run metadata and iteration history.</li>
+      <li><code>*_memory.pkl</code> stores molecule pools and dataframes for viewer/tables.</li>
+    </ul>
+  </section>
+  <section class="help-section">
+    <h3>Common Questions (Placeholder)</h3>
+    <ul>
+      <li>Why is a run not updating yet?</li>
+      <li>How do I load a previous run?</li>
+      <li>What does each action type mean (<code>GENERATE</code>, <code>OPTIMIZE</code>, <code>CODE</code>)?</li>
+    </ul>
+  </section>
+  <section class="help-section">
+    <h3>Metric Definitions (Placeholder)</h3>
+    <table class="help-metric-table">
+      <thead><tr><th>Metric</th><th>Definition</th><th>Interpretation</th></tr></thead>
+      <tbody>""" + metric_rows + """</tbody>
+    </table>
+  </section>
+  <section class="help-section">
+    <h3>Example Run Narrative (Placeholder)</h3>
+    <ol>
+      <li><code>GENERATE</code> creates an initial molecule pool from target pocket context.</li>
+      <li><code>OPTIMIZE</code> or <code>CODE</code> refines pools against constraints.</li>
+      <li>Goal evaluation checks if all molecules in the selected pool satisfy the requirements.</li>
+    </ol>
+  </section>
+</div>
+"""
