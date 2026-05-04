@@ -26,6 +26,7 @@ from .molecules import (
 from .reports import build_report_bundle_file
 from .runner import launch_run, recover_active_run
 from .ui_components import help_panel
+from .viewer3d import render_uploaded_structure, shift_pose_index
 
 
 def choose_server_port(host: str = "127.0.0.1", preferred: int = 7960) -> int:
@@ -151,12 +152,25 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     requirements_df = gr.Dataframe(label="Task requirements", interactive=False, wrap=True, show_label=False, max_height=320)
 
         with gr.Tab("3D Viewer"):
-            with gr.Column(elem_classes=["primary-panel"]):
-                gr.Markdown("<p class='section-title'>3D Viewer</p>")
-                gr.Markdown("<p class='helper-text'>The modular shell is ready for the previous ligand/receptor viewer. Next pass will move the py3Dmol logic here.</p>")
-                gr.File(label="Ligand or pose file", file_types=[".sdf", ".mol", ".mol2", ".pdb", ".pdbqt"])
-                gr.File(label="Receptor file", file_types=[".pdb", ".pdbqt"])
-                gr.HTML("<div class='empty-panel'>3D rendering module pending migration.</div>")
+            with gr.Row(elem_classes=["viewer3d-layout"]):
+                with gr.Column(scale=1, min_width=280, elem_classes=["secondary-panel", "viewer3d-controls"]):
+                    gr.Markdown("<p class='section-title'>3D Setup</p>")
+                    ligand_file = gr.File(label="Ligand / pose", file_types=[".pdb", ".sdf", ".mol2", ".pdbqt"], elem_classes=["compact-upload"])
+                    receptor_file = gr.File(label="Receptor / surface", file_types=[".pdb", ".pdbqt", ".mol2"], elem_classes=["compact-upload"])
+                    pose_number = gr.State(1)
+                    ligand_style = gr.State("stick")
+                    ligand_color = gr.State("spectrum")
+                    receptor_style = gr.State("surface")
+                    receptor_color = gr.Radio(["blue", "orangeCarbon"], value="blue", label="Receptor surface color")
+                    receptor_opacity = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="Receptor opacity")
+                    render_3d = gr.Button("Render 3D", variant="primary")
+                    viewer_status = gr.State("")
+                with gr.Column(scale=3, elem_classes=["viewer3d-surface"]):
+                    viewer_badge = gr.HTML("<span class='viewer3d-badge'>No structure loaded</span>")
+                    viewer_html = gr.HTML()
+                    with gr.Row(elem_classes=["viewer3d-nav"]):
+                        prev_pose = gr.Button("Prev pose", variant="secondary")
+                        next_pose = gr.Button("Next pose", variant="secondary")
 
         with gr.Tab("Trends"):
             with gr.Row():
@@ -202,6 +216,10 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     download_current.click(download_current_pool_csv, [run_dir_state, run_json_state, pool_select], [download_current])
     download_all.click(download_all_pools_csv, [run_dir_state, run_json_state], [download_all])
     report_file.click(build_report_bundle_file, [run_dir_state, run_json_state], [report_file])
+    render_inputs = [ligand_file, receptor_file, ligand_style, ligand_color, receptor_style, receptor_color, receptor_opacity, pose_number]
+    render_3d.click(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
+    prev_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(-1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
+    next_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
 
 
 if __name__ == "__main__":
