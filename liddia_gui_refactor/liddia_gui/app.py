@@ -25,6 +25,7 @@ from .molecules import (
 )
 from .reports import build_report_bundle_file
 from .runner import launch_run, recover_active_run
+from .trends import apply_metric_filter
 from .ui_components import help_panel
 from .viewer3d import render_uploaded_structure, shift_pose_index
 
@@ -173,13 +174,16 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         next_pose = gr.Button("Next pose", variant="secondary")
 
         with gr.Tab("Trends"):
-            with gr.Row():
+            with gr.Row(elem_classes=["trends-layout"]):
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Metric Trends</p>")
+                    gr.Markdown("<p class='helper-text'>Median metric values by iteration for the loaded or active run.</p>")
+                    trend_state = gr.State([])
+                    trend_metric_select = gr.Dropdown(label="Metric", choices=["All"], value="All", allow_custom_value=False)
                     trend_plot_component = gr.Plot(label="Metric trends")
-                with gr.Column(scale=2, elem_classes=["secondary-panel"]):
+                with gr.Column(scale=2, elem_classes=["secondary-panel trend-rollup"]):
                     gr.Markdown("<p class='section-title'>Iteration Rollup</p>")
-                    trend_df = gr.Dataframe(label="Median metrics by iteration", interactive=False, wrap=True)
+                    trend_df = gr.Dataframe(label="Median metrics by iteration", interactive=False, wrap=True, show_label=False, max_height=520)
 
         with gr.Tab("Help"):
             with gr.Column(elem_classes=["primary-panel"]):
@@ -203,8 +207,10 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         pool_select,
         pool_badge,
         mol_table,
-        trend_df,
+        trend_state,
         trend_plot_component,
+        trend_metric_select,
+        trend_df,
         run_dir_state,
         run_json_state,
     ]
@@ -220,6 +226,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     render_3d.click(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
     prev_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(-1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
     next_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
+    trend_metric_select.change(apply_metric_filter, [trend_state, trend_metric_select], [trend_plot_component], show_progress="hidden")
 
 
 if __name__ == "__main__":

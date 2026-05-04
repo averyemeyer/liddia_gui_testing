@@ -11,7 +11,7 @@ import pandas as pd
 from .logs import active_log_text
 from .molecules import enrich_parsed_with_memory, molecule_table, pool_choices, selected_pool_badge
 from .parsers import compact_metric_rows, metric_rows, parse_run_data, raw_json_text, requirements_rows
-from .trends import trend_plot, trend_rows
+from .trends import iteration_rollup, metric_choices, trend_plot, trend_rows
 from .ui_components import action_timeline, elapsed_panel, error_panel, progress, run_overview, status_badge
 
 
@@ -33,8 +33,10 @@ class DashboardRender:
     pool_select: Any
     pool_badge: str
     mol_table: pd.DataFrame
-    trend_df: pd.DataFrame
+    trend_state: pd.DataFrame
     trend_plot_component: Any
+    trend_metric_select: Any
+    trend_df: pd.DataFrame
     run_dir_state: str
     run_json_state: str
 
@@ -48,6 +50,8 @@ class DashboardRender:
         metrics = pd.DataFrame(metric_rows(parsed))
         pool_ids, selected_pool = pool_choices(run_dir_text, run_json_text)
         trend_data = trend_rows(parsed)
+        choices = metric_choices(trend_data)
+        selected_metric = choices[1] if len(choices) > 1 else "All"
         return cls(
             status_text=message,
             status_html=status_badge(parsed, recovered=recovered),
@@ -65,8 +69,10 @@ class DashboardRender:
             pool_select=gr.update(choices=pool_ids, value=selected_pool),
             pool_badge=selected_pool_badge(selected_pool),
             mol_table=molecule_table(run_dir_text, run_json_text, selected_pool),
-            trend_df=pd.DataFrame(trend_data),
-            trend_plot_component=trend_plot(trend_data),
+            trend_state=pd.DataFrame(trend_data),
+            trend_plot_component=trend_plot(trend_data, selected_metric),
+            trend_metric_select=gr.update(choices=choices, value=selected_metric),
+            trend_df=pd.DataFrame(iteration_rollup(parsed)),
             run_dir_state=run_dir_text,
             run_json_state=run_json_text,
         )
@@ -90,8 +96,10 @@ class DashboardRender:
             self.pool_select,
             self.pool_badge,
             self.mol_table,
-            self.trend_df,
+            self.trend_state,
             self.trend_plot_component,
+            self.trend_metric_select,
+            self.trend_df,
             self.run_dir_state,
             self.run_json_state,
         )

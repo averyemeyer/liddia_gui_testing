@@ -80,3 +80,6 @@ footer { display:none!important; }
 .viewer3d-badge { display:inline-flex; align-items:center; width:fit-content; margin:12px 14px 0; padding:5px 10px; border-radius:999px; border:1px solid #d1d5db; background:#f8fafc; color:#0f172a; font-size:12px; font-weight:800; }
 .viewer3d-nav { padding:0 14px 14px!important; gap:10px!important; }
 .viewer3d-nav button { font-weight:800!important; }
+.trends-layout { align-items:flex-start; }
+.trend-rollup { max-width:520px; }
+.trend-rollup table { table-layout:auto; }
