@@ -1,4 +1,4 @@
-from liddia_gui_refactor.liddia_gui.dashboard import DashboardRender
+from liddia_gui_app.liddia_gui.dashboard import DashboardRender
 
 
 def test_dashboard_render_output_contract_has_named_fields():

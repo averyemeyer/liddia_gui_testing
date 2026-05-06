@@ -8,8 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
-# The refactor package currently lives in liddia_gui_refactor/liddia_gui,
-# while the LIDDIA runtime, dataset, and historical logs live at repo root.
+# The GUI package lives in liddia_gui_app/liddia_gui, while the LIDDIA runtime,
+# dataset, and historical logs live at repo root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_PY = REPO_ROOT / "run.py"
 LOG_ROOT = REPO_ROOT / "log"

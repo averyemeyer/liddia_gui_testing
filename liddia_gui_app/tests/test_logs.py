@@ -1,5 +1,5 @@
-from liddia_gui_refactor.liddia_gui.logs import active_log_text, classify_log_text, log_diagnostics_html, tail_text
-from liddia_gui_refactor.liddia_gui.run_state import ActiveRun, write_lock
+from liddia_gui_app.liddia_gui.logs import active_log_text, classify_log_text, log_diagnostics_html, tail_text
+from liddia_gui_app.liddia_gui.run_state import ActiveRun, write_lock
 
 
 def test_tail_text_returns_file_end(tmp_path):

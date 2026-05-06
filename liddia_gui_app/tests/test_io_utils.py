@@ -1,4 +1,4 @@
-from liddia_gui_refactor.liddia_gui.io_utils import available_run_dirs, latest_json_in_dir, run_dir_choices, safe_read_json
+from liddia_gui_app.liddia_gui.io_utils import available_run_dirs, latest_json_in_dir, run_dir_choices, safe_read_json
 
 
 def test_safe_read_json_returns_last_good_data_during_transient_write(tmp_path):

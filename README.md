@@ -33,7 +33,8 @@ The argument for `--target` must be one of the targets in `dataset/pdb/`. The li
 Run the local GUI:
 
 ```console
-python liddia_gradio_appv2_rewrite.py
+cd liddia_gui_app
+python -m liddia_gui.app
 ```
 
 You can also use the convenience launcher:
@@ -42,12 +43,15 @@ You can also use the convenience launcher:
 ./launch_liddiabrowser.command
 ```
 
-Edit `launch_liddiabrowser.command` with your local paths (repo dir + conda env).
+On macOS/Linux, you can also run `liddia_gui_app/launch_gui.command`.
+On Windows PowerShell, run `liddia_gui_app/launch_gui.ps1`.
+See `liddia_gui_app/README.md` for setup notes and troubleshooting.
 
 The GUI:
 - launches runs and monitors progress
 - loads previous runs from `log/`
 - visualizes molecule pools and metrics
+- renders the modular 3D viewer, trends, diagnostics, and help pages
 
 Run artifacts are written to `log/<run_id>/`:
 - `<target>.json` (run metadata + iteration history)
@@ -61,6 +65,8 @@ Create the environment:
 conda env create -f environment.yml
 conda activate liddia
 ```
+
+For GUI users, `liddia_gui_app/environment.yml` is also provided as a GUI-friendly starting point based on the working `liddia-mac` development environment.
 
 ## Citation
 

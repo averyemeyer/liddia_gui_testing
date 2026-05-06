@@ -1,4 +1,4 @@
-from liddia_gui_refactor.liddia_gui.artifacts import discover_liddia_artifacts, is_liddia_run_json
+from liddia_gui_app.liddia_gui.artifacts import discover_liddia_artifacts, is_liddia_run_json
 
 
 def test_artifact_discovery_prefers_liddia_outputs(tmp_path):

@@ -1,0 +1,36 @@
+name: liddia-mac
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=1.26
+  - pandas=2.1
+  - scipy
+  - scikit-learn
+  - pyyaml
+  - requests
+  - rdkit=2023.09
+  - vina=1.2
+  - jupyter
+  - ipykernel
+  - pip:
+      # GUI/runtime pieces present in the working liddia-mac environment.
+      - gradio==6.11.0
+      - py3Dmol==2.5.4
+      - plotly==6.6.0
+      - fire==0.7.1
+      - anthropic==0.86.0
+      - openai==2.29.0
+      - pytdc==1.1.15
+      - admet-ai==1.4.0
+      - biopython==1.86
+      - biopandas==0.5.1
+      - meeko==0.7.1
+      - tqdm==4.67.3
+      - networkx==3.6.1
+      - selfies==2.2.0
+      - tiktoken==0.12.0
+      - pdfplumber==0.11.9
+      - pypdfium2==5.6.0
+      - AutoDockTools_py3 @ git+https://github.com/Valdes-Tresanco-MS/AutoDockTools_py3@a62a5d98116f1590183b58a9ad732b997cf2579c

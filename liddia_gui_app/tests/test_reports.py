@@ -3,7 +3,7 @@ import zipfile
 
 import pandas as pd
 
-from liddia_gui_refactor.liddia_gui.reports import build_report_bundle_file
+from liddia_gui_app.liddia_gui.reports import build_report_bundle_file
 
 
 class FakeMemory:
@@ -23,7 +23,7 @@ def test_report_bundle_exports_txt_json_and_csv(tmp_path, monkeypatch):
     run_json = run_dir / "EGFR.json"
     run_json.write_text(json.dumps({"model": "claude-test", "0": {"action": ["GENERATE001", []], "action_output": "MOL005"}, "task": {"target": "EGFR"}}))
 
-    monkeypatch.setattr("liddia_gui_refactor.liddia_gui.molecules.load_memory", lambda run_dir: FakeMemory())
+    monkeypatch.setattr("liddia_gui_app.liddia_gui.molecules.load_memory", lambda run_dir: FakeMemory())
 
     bundle = build_report_bundle_file(str(run_dir), str(run_json))
 

@@ -5,7 +5,7 @@ param(
 
 # Launch the modular LIDDIA GUI from this repository checkout.
 # Example:
-#   powershell -ExecutionPolicy Bypass -File .\liddia_gui_refactor\launch_gui.ps1
+#   powershell -ExecutionPolicy Bypass -File .\liddia_gui_app\launch_gui.ps1
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path

@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from liddia_gui_refactor.liddia_gui.backend import LiddiaV2Backend, RunConfig
+from liddia_gui_app.liddia_gui.backend import LiddiaV2Backend, RunConfig
 
 
 def test_v2_backend_builds_base_command():

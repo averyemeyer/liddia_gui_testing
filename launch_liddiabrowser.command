@@ -18,4 +18,4 @@ export NUMEXPR_NUM_THREADS=1
 export JOBLIB_TEMP_FOLDER="$REPO_DIR/log/.joblib_tmp"
 mkdir -p "$JOBLIB_TEMP_FOLDER"
 
-python liddia_gradio_appv2_rewrite.py
+bash "$REPO_DIR/liddia_gui_app/launch_gui.command"

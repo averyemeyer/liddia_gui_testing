@@ -1,6 +1,6 @@
 import pandas as pd
 
-from liddia_gui_refactor.liddia_gui.task_context import merge_task_context, task_context
+from liddia_gui_app.liddia_gui.task_context import merge_task_context, task_context
 
 
 def test_task_context_derives_requirements_from_drug_csv(tmp_path):
@@ -25,7 +25,7 @@ def test_task_context_derives_requirements_from_drug_csv(tmp_path):
 
 def test_merge_task_context_preserves_liddia_output(monkeypatch):
     monkeypatch.setattr(
-        "liddia_gui_refactor.liddia_gui.task_context.task_context",
+        "liddia_gui_app.liddia_gui.task_context.task_context",
         lambda target, max_iter: {"target": target, "resource": max_iter, "requirements": ["fallback"]},
     )
 

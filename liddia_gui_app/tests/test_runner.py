@@ -1,7 +1,7 @@
 import time
 
-from liddia_gui_refactor.liddia_gui.runner import _active_placeholder_data
-from liddia_gui_refactor.liddia_gui.run_state import ActiveRun, write_run_state
+from liddia_gui_app.liddia_gui.runner import _active_placeholder_data
+from liddia_gui_app.liddia_gui.run_state import ActiveRun, write_run_state
 
 
 def test_active_placeholder_data_renders_as_running_run_data():
@@ -24,7 +24,7 @@ def test_active_placeholder_data_renders_as_running_run_data():
 
 def test_active_placeholder_includes_task_requirements(monkeypatch):
     monkeypatch.setattr(
-        "liddia_gui_refactor.liddia_gui.runner.task_context",
+        "liddia_gui_app.liddia_gui.runner.task_context",
         lambda target, max_iter: {"target": target, "resource": max_iter, "requirements": ["At least 5 molecules"]},
     )
     active = ActiveRun(pid=123, started_at=time.time(), known_dirs=[], target="EGFR", model="claude-test", max_iter=2)

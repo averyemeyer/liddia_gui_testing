@@ -1,5 +1,5 @@
-from liddia_gui_refactor.liddia_gui.parsers import parse_run_data
-from liddia_gui_refactor.liddia_gui.trends import filter_trend_rows, iteration_rollup, metric_choices, trend_rows
+from liddia_gui_app.liddia_gui.parsers import parse_run_data
+from liddia_gui_app.liddia_gui.trends import filter_trend_rows, iteration_rollup, metric_choices, trend_rows
 
 
 def test_trends_include_metric_choices_and_iteration_rollup():

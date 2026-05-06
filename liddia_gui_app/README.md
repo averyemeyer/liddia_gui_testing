@@ -2,7 +2,7 @@
 
 Modular Gradio interface for launching LIDDIA runs, monitoring progress, reviewing molecule pools, inspecting 3D structures, and exporting reports.
 
-This GUI is a refactor of the older flat Gradio script. The current goal is to keep GUI concerns in `liddia_gui_refactor/liddia_gui/` while relying on normal LIDDIA run artifacts under `log/<run_id>/`.
+This is the current modular Gradio GUI. GUI concerns live in `liddia_gui_app/liddia_gui/`, while run data comes from normal LIDDIA artifacts under `log/<run_id>/`.
 
 ## Current Status
 
@@ -15,7 +15,7 @@ This GUI is a refactor of the older flat Gradio script. The current goal is to k
 
 ## Setup
 
-Use a Python environment that has LIDDIA's runtime dependencies installed. At minimum, the GUI/runtime currently expects packages such as Gradio, Fire, pandas, RDKit, Plotly, and the LIDDIA docking stack used by the main repository.
+Use a Python environment that has LIDDIA's runtime dependencies installed. At minimum, the GUI/runtime currently expects packages such as Gradio, Fire, pandas, RDKit, Plotly, py3Dmol, and the LIDDIA docking stack used by the main repository.
 
 Example with conda:
 
@@ -23,7 +23,14 @@ Example with conda:
 conda activate liddia-mac
 ```
 
-If you are setting this up on a new machine, create or update an environment from the repository's environment file when available, then install any missing LIDDIA-specific dependencies.
+If you are setting this up on a new machine, start with the GUI environment file:
+
+```bash
+conda env create -f liddia_gui_app/environment.yml
+conda activate liddia-mac
+```
+
+That file is based on the working local `liddia-mac` environment and keeps the direct GUI/LIDDIA dependencies explicit instead of exporting every transitive package from the development machine.
 
 ## Launch
 
@@ -33,21 +40,21 @@ macOS/Linux:
 
 ```bash
 cd /path/to/LIDDIA
-chmod +x liddia_gui_refactor/launch_gui.command
-./liddia_gui_refactor/launch_gui.command
+chmod +x liddia_gui_app/launch_gui.command
+./liddia_gui_app/launch_gui.command
 ```
 
 Windows PowerShell:
 
 ```powershell
 cd C:\path\to\LIDDIA
-powershell -ExecutionPolicy Bypass -File .\liddia_gui_refactor\launch_gui.ps1
+powershell -ExecutionPolicy Bypass -File .\liddia_gui_app\launch_gui.ps1
 ```
 
 Manual launch from the repository root:
 
 ```bash
-cd /path/to/LIDDIA/liddia_gui_refactor
+cd /path/to/LIDDIA/liddia_gui_app
 python -m liddia_gui.app
 ```
 
@@ -73,7 +80,7 @@ python -m liddia_gui.app
 macOS example from the original development machine:
 
 ```bash
-cd /Users/meyer.1938/Desktop/LIDDIA/liddia_gui_refactor
+cd /Users/meyer.1938/Desktop/LIDDIA/liddia_gui_app
 GRADIO_SERVER_PORT=7961 /Users/meyer.1938/anaconda3/envs/liddia-mac/bin/python -m liddia_gui.app
 ```
 
@@ -161,7 +168,7 @@ The timer uses a lightweight Monitor refresh path, but heavy docking or model wo
 Use normal Windows paths in PowerShell, for example:
 
 ```powershell
-cd C:\Users\<you>\Desktop\LIDDIA\liddia_gui_refactor
+cd C:\Users\<you>\Desktop\LIDDIA\liddia_gui_app
 python -m liddia_gui.app
 ```
 
@@ -186,7 +193,7 @@ The GUI stores run artifacts under the repository's `log/` directory regardless 
 From the repository root:
 
 ```bash
-python -m pytest liddia_gui_refactor/tests
+python -m pytest liddia_gui_app/tests
 ```
 
 The app should be launched with an environment that has LIDDIA runtime dependencies. Tests can run from any environment that has the test dependencies installed.

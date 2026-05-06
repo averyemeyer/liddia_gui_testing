@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from liddia_gui_refactor.liddia_gui.viewer3d import count_pdbqt_poses, extract_pdbqt_pose, extract_pdbqt_vina_score, pdbqt_to_pdb, render_uploaded_structure
+from liddia_gui_app.liddia_gui.viewer3d import count_pdbqt_poses, extract_pdbqt_pose, extract_pdbqt_vina_score, pdbqt_to_pdb, render_uploaded_structure
 
 
 PDBQT = """MODEL 1

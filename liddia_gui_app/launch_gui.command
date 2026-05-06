@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Launch the modular LIDDIA GUI from this repository checkout.
 # macOS users can double-click this file after making it executable:
-#   chmod +x liddia_gui_refactor/launch_gui.command
+#   chmod +x liddia_gui_app/launch_gui.command
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"

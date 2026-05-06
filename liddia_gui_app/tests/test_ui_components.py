@@ -1,5 +1,5 @@
-from liddia_gui_refactor.liddia_gui.run_state import ActiveRun
-from liddia_gui_refactor.liddia_gui.ui_components import recovery_card
+from liddia_gui_app.liddia_gui.run_state import ActiveRun
+from liddia_gui_app.liddia_gui.ui_components import recovery_card
 
 
 def test_recovery_card_shows_active_run_metadata():

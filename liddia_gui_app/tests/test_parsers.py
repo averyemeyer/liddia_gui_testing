@@ -1,4 +1,4 @@
-from liddia_gui_refactor.liddia_gui.parsers import metric_rows, parse_run_data, requirements_rows, timeline_rows
+from liddia_gui_app.liddia_gui.parsers import metric_rows, parse_run_data, requirements_rows, timeline_rows
 
 
 def sample_run():

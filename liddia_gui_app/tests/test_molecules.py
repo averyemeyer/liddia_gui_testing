@@ -1,6 +1,6 @@
 import pandas as pd
 
-from liddia_gui_refactor.liddia_gui.molecules import enrich_parsed_with_memory, pool_stats
+from liddia_gui_app.liddia_gui.molecules import enrich_parsed_with_memory, pool_stats
 
 
 class FakeMemory:
@@ -27,8 +27,8 @@ class FakeMemory:
 
 
 def test_pool_stats_normalizes_memory_metrics(monkeypatch):
-    monkeypatch.setattr("liddia_gui_refactor.liddia_gui.molecules.load_memory", lambda run_dir: FakeMemory())
-    monkeypatch.setattr("liddia_gui_refactor.liddia_gui.molecules.resolve_run_dir", lambda *_: object())
+    monkeypatch.setattr("liddia_gui_app.liddia_gui.molecules.load_memory", lambda run_dir: FakeMemory())
+    monkeypatch.setattr("liddia_gui_app.liddia_gui.molecules.resolve_run_dir", lambda *_: object())
 
     stats = pool_stats("/tmp/run", "/tmp/run/EGFR.json", "MOL005")
 
@@ -39,8 +39,8 @@ def test_pool_stats_normalizes_memory_metrics(monkeypatch):
 
 
 def test_enrich_parsed_with_memory_updates_final_pool(monkeypatch):
-    monkeypatch.setattr("liddia_gui_refactor.liddia_gui.molecules.load_memory", lambda run_dir: FakeMemory())
-    monkeypatch.setattr("liddia_gui_refactor.liddia_gui.molecules.resolve_run_dir", lambda *_: object())
+    monkeypatch.setattr("liddia_gui_app.liddia_gui.molecules.load_memory", lambda run_dir: FakeMemory())
+    monkeypatch.setattr("liddia_gui_app.liddia_gui.molecules.resolve_run_dir", lambda *_: object())
 
     parsed = {
         "steps": [{"step": 1, "action_output": "MOL005", "pool_stats": {}}],
