@@ -2,13 +2,11 @@
 
 **Update: This repository is still in progress.**
 
-This repo now ships with a local Gradio GUI for launching and monitoring runs, plus a CLI for batch runs.
-
 # LIDDiA: Language-based Intelligent Drug Discovery Agent
 
 In our [paper](https://arxiv.org/abs/2502.13959), we introduce a LLM-based agent for drug discovery called `LIDDiA` (Language-based Intelligent Drug Discovery Agent). Using `LIDDiA`, you can specify what properties the molecules should have, and `LIDDiA` will run computational tools to generate and evaluate the molecules.
 
-## Quickstart (CLI)
+## Quickstart
 
 **Note: The current code for `LIDDiA` randomly sample molecules from TDC ZINC rather than using Pocket2Mol**
 
@@ -28,35 +26,6 @@ python run.py --target EGFR --max_iter 10 --model "claude-3-5-sonnet-20241022"
 
 The argument for `--target` must be one of the targets in `dataset/pdb/`. The list of arguments for `--model` is available [here](https://docs.claude.com/en/docs/about-claude/models/overview).
 
-## Quickstart (GUI)
-
-Run the local GUI:
-
-```console
-cd liddia_gui_app
-python -m liddia_gui.app
-```
-
-You can also use the convenience launcher:
-
-```console
-./launch_liddiabrowser.command
-```
-
-On macOS/Linux, you can also run `liddia_gui_app/launch_gui.command`.
-On Windows PowerShell, run `liddia_gui_app/launch_gui.ps1`.
-See `liddia_gui_app/README.md` for setup notes and troubleshooting.
-
-The GUI:
-- launches runs and monitors progress
-- loads previous runs from `log/`
-- visualizes molecule pools and metrics
-- renders the modular 3D viewer, trends, diagnostics, and help pages
-
-Run artifacts are written to `log/<run_id>/`:
-- `<target>.json` (run metadata + iteration history)
-- `<target>_memory.pkl` (molecule pools + dataframe)
-
 ## Setup
 
 Create the environment:
@@ -67,6 +36,29 @@ conda activate liddia
 ```
 
 For GUI users, `liddia_gui_app/environment.yml` is also provided as a GUI-friendly starting point based on the working `liddia-mac` development environment.
+
+## GUI
+
+This fork includes a modular local Gradio GUI in `liddia_gui_app/`. The GUI-specific setup, launch commands, architecture notes, troubleshooting, and tests live in `liddia_gui_app/README.md`.
+
+## Changes From Upstream
+
+This repository is based on the upstream LIDDIA source at [ninglab/LIDDIA](https://github.com/ninglab/LIDDIA/tree/main). Compared with upstream `main`, this working branch adds:
+
+- A modular GUI application under `liddia_gui_app/` for launching, monitoring, recovering, reviewing, and exporting LIDDIA runs.
+- GUI-focused launchers for macOS/Linux and Windows, plus a GUI environment file based on the working `liddia-mac` setup.
+- A run-artifact reader layer that relies on normal LIDDIA outputs in `log/<run_id>/`, rather than one-off GUI-only data files.
+- Focused tests for the GUI adapters, parsers, run-state recovery, report export, trends, molecule tables, logs, and 3D viewer.
+- Archived earlier GUI prototypes under `old gui/` so historical versions are preserved but no longer treated as the active app.
+- `.gitignore` cleanup for local runtime artifacts such as logs, downloaded data, docking temp files, pickles, Python caches, and API key files.
+
+This branch also contains local changes to `run.py` that make runs easier to monitor from the GUI:
+
+- Anthropic keys can be read from `ANTHROPIC_API_KEY` or `my-anthropic-key.txt`.
+- Runs write incremental JSON snapshots with runtime metadata while they are active.
+- Runtime metadata includes current iteration, max iterations, timestamps, and elapsed seconds.
+- A lightweight heartbeat writes best-effort progress snapshots for recovery after browser/tab closure.
+- Model responses that indicate completion without a new action are handled more gracefully.
 
 ## Citation
 
