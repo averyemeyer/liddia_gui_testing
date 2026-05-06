@@ -53,3 +53,51 @@ def available_run_dirs(log_root: Path) -> list[str]:
         if child.is_dir() and latest_json_in_dir(child):
             names.append(child.name)
     return sorted(names, reverse=True)
+
+
+def run_dir_choices(log_root: Path) -> list[tuple[str, str]]:
+    """Return dropdown choices as (display label, run folder name)."""
+    choices: list[tuple[str, str]] = []
+    for folder in available_run_dirs(log_root):
+        run_dir = log_root / folder
+        label = run_choice_label(run_dir, folder)
+        choices.append((label, folder))
+    return choices
+
+
+def run_choice_label(run_dir: Path, fallback_name: str | None = None) -> str:
+    """Build a compact, artifact-derived label for a run folder."""
+    folder = fallback_name or run_dir.name
+    run_json = latest_json_in_dir(run_dir)
+    data = safe_read_json(run_json) if run_json else None
+    state = safe_read_json(run_dir / "run_state.json")
+
+    task = data.get("task") if isinstance(data, dict) and isinstance(data.get("task"), dict) else {}
+    target = task.get("target") or (state or {}).get("target") or _target_from_folder(folder)
+    model = (data or {}).get("model") or (state or {}).get("model") or "model unknown"
+    status = _run_status(data, state)
+    return f"{status} | {target or 'target unknown'} | {folder} | {model}"
+
+
+def _target_from_folder(folder: str) -> str | None:
+    if "_" not in folder:
+        return None
+    return folder.rsplit("_", 1)[-1] or None
+
+
+def _run_status(data: dict[str, Any] | None, state: dict[str, Any] | None) -> str:
+    status = str((state or {}).get("status") or "").upper()
+    if status == "RUNNING":
+        return "RUNNING"
+    if isinstance(data, dict):
+        if data.get("error_message"):
+            return "ERROR"
+        if data.get("cancelled"):
+            return "CANCELLED"
+        if data.get("success") is True:
+            return "SUCCESS"
+        if data.get("success") is False:
+            return "FAILED"
+    if status:
+        return status
+    return "UNKNOWN"

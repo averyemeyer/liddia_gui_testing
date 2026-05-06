@@ -1,4 +1,4 @@
-from liddia_gui_refactor.liddia_gui.logs import active_log_text, tail_text
+from liddia_gui_refactor.liddia_gui.logs import active_log_text, classify_log_text, log_diagnostics_html, tail_text
 from liddia_gui_refactor.liddia_gui.run_state import ActiveRun, write_lock
 
 
@@ -32,3 +32,19 @@ def test_active_log_text_uses_lock_paths(tmp_path):
     assert "--- STDERR ---" in text
     assert "boom" in text
 
+
+def test_classify_log_text_detects_missing_dependencies():
+    findings = classify_log_text(
+        "ModuleNotFoundError: No module named 'fire'\n"
+        "ModuleNotFoundError: No module named 'MolKit'\n"
+        "RuntimeError: Error: file /tmp/protein.pdbqt does not exist."
+    )
+
+    titles = [finding["title"] for finding in findings]
+    assert "Missing Fire dependency" in titles
+    assert "Missing MolKit dependency" in titles
+    assert "Docking receptor was not prepared" in titles
+
+
+def test_log_diagnostics_html_returns_empty_panel_without_matches():
+    assert "No recognized runtime issues" in log_diagnostics_html("plain progress output")

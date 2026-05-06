@@ -8,7 +8,7 @@ from typing import Any
 import gradio as gr
 import pandas as pd
 
-from .logs import active_log_text
+from .logs import active_log_text, log_diagnostics_html
 from .molecules import enrich_parsed_with_memory, molecule_table, pool_choices, selected_pool_badge
 from .parsers import compact_metric_display_rows, metric_display_rows, parse_run_data, raw_json_text, requirements_rows
 from .trends import iteration_rollup, metric_choices, trend_plot, trend_rows
@@ -25,6 +25,7 @@ class MonitorRender:
     timeline_html: str
     monitor_metrics_df: pd.DataFrame
     errors_html: str
+    log_diagnostics: str
     logs_text: str
     run_dir_state: str
     run_json_state: str
@@ -43,6 +44,7 @@ class MonitorRender:
         run_dir_text = str(run_dir or "")
         run_json_text = str(run_json or "")
         parsed = parse_run_data(data)
+        logs = active_log_text() if include_logs else gr.skip()
         return cls(
             status_text=message,
             status_html=status_badge(parsed, recovered=recovered),
@@ -52,7 +54,8 @@ class MonitorRender:
             timeline_html=action_timeline(parsed),
             monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed)),
             errors_html=error_panel(parsed),
-            logs_text=active_log_text() if include_logs else gr.skip(),
+            log_diagnostics=log_diagnostics_html(logs) if include_logs else gr.skip(),
+            logs_text=logs,
             run_dir_state=run_dir_text,
             run_json_state=run_json_text,
         )

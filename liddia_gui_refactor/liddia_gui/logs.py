@@ -6,6 +6,7 @@ or referenced by a recovered lock file.
 """
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 from .config import LOG_ROOT
@@ -44,3 +45,85 @@ def active_log_text(log_root: Path = LOG_ROOT) -> str:
         return "No CLI logs found yet."
     return f"--- STDOUT ---\n{out or '(empty)'}\n\n--- STDERR ---\n{err or '(empty)'}"
 
+
+def classify_log_text(text: str) -> list[dict[str, str]]:
+    """Return user-facing diagnostics for common runtime log patterns."""
+    if not text or text == "No CLI logs found yet.":
+        return []
+    lower = text.lower()
+    findings: list[dict[str, str]] = []
+
+    def add(title: str, detail: str, action: str) -> None:
+        findings.append({"title": title, "detail": detail, "action": action})
+
+    if "no module named 'fire'" in lower or 'no module named "fire"' in lower:
+        add(
+            "Missing Fire dependency",
+            "LIDDIA could not import the Fire CLI package.",
+            "Activate the LIDDIA environment or install it with `python -m pip install fire`.",
+        )
+    if "rdkit unavailable" in lower or "no module named 'rdkit'" in lower or 'no module named "rdkit"' in lower:
+        add(
+            "Missing RDKit dependency",
+            "Molecule thumbnails or chemistry parsing cannot run without RDKit.",
+            "Use the LIDDIA environment or install RDKit, usually with `conda install -c conda-forge rdkit`.",
+        )
+    if "no module named 'molkit'" in lower or 'no module named "molkit"' in lower:
+        add(
+            "Missing MolKit dependency",
+            "AutoDockTools receptor preparation could not import MolKit.",
+            "Fix the AutoDockTools/MGLTools installation before relying on Vina docking scores.",
+        )
+    if "protein.pdbqt does not exist" in lower:
+        add(
+            "Docking receptor was not prepared",
+            "Vina expected `protein.pdbqt`, but receptor preparation did not create it.",
+            "This often follows the MolKit error. Treat Vina scores from this run as failed or incomplete.",
+        )
+    if "anthropic api key not found" in lower or "missing anthropic api key" in lower:
+        add(
+            "Missing Anthropic API key",
+            "LIDDIA could not find an API key for the model provider.",
+            "Enter the key in Run Setup or set `ANTHROPIC_API_KEY` before launching.",
+        )
+    if "authentication" in lower and ("anthropic" in lower or "api" in lower):
+        add(
+            "Model provider authentication failed",
+            "The model provider rejected the configured credentials.",
+            "Check the API key and make sure it is valid for the selected provider/model.",
+        )
+    if "rate limit" in lower or "rate_limit" in lower:
+        add(
+            "Model provider rate limit",
+            "The model provider is throttling requests.",
+            "Wait and retry, reduce run frequency, or use a provider/model with more quota.",
+        )
+    if "could not parse action/input" in lower:
+        add(
+            "Model response parsing failed",
+            "The model did not return an action/input pair LIDDIA could parse.",
+            "Try a different model or inspect the raw response in the run JSON/logs.",
+        )
+    if "bad file descriptor" in lower:
+        add(
+            "Subprocess stream warning",
+            "A child process reported a standard-stream file descriptor issue.",
+            "If the run completed, this may be secondary noise. If docking failed too, fix docking dependencies first.",
+        )
+    return findings
+
+
+def log_diagnostics_html(text: str) -> str:
+    findings = classify_log_text(text)
+    if not findings:
+        return "<div class='empty-panel'>No recognized runtime issues in the current logs.</div>"
+    cards = []
+    for finding in findings:
+        cards.append(
+            "<div class='diagnostic-item'>"
+            f"<strong>{html.escape(finding['title'])}</strong>"
+            f"<p>{html.escape(finding['detail'])}</p>"
+            f"<code>{html.escape(finding['action'])}</code>"
+            "</div>"
+        )
+    return "<div class='diagnostic-panel'>" + "".join(cards) + "</div>"

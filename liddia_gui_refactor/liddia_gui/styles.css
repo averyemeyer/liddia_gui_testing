@@ -44,6 +44,11 @@ footer { display:none!important; }
 .empty-panel { border:1px solid var(--line); border-radius:var(--radius-sm); background:#fbfcfe; color:var(--muted); padding:14px; font-size:13px; }
 .error-panel { border:1px solid #fecaca; border-radius:var(--radius-sm); background:#fff7f7; padding:12px; }
 .error-panel pre { white-space:pre-wrap; overflow-wrap:anywhere; color:#991b1b; font-size:12px; margin:0 0 10px; }
+.diagnostic-panel { display:flex; flex-direction:column; gap:10px; margin-bottom:12px; }
+.diagnostic-item { border:1px solid #fed7aa; border-radius:8px; background:#fff7ed; padding:12px; color:#7c2d12; }
+.diagnostic-item strong { display:block; color:#9a3412; margin-bottom:4px; }
+.diagnostic-item p { margin:0 0 8px; font-size:13px; color:#7c2d12; }
+.diagnostic-item code { display:block; white-space:normal; background:#ffedd5; color:#7c2d12; padding:6px 8px; border-radius:6px; font-size:12px; }
 .recovery-card { border:1px solid var(--line); border-radius:8px; background:#fbfcfe; padding:12px; margin-top:12px; }
 .help-panel { border:1px solid var(--line); border-radius:var(--radius-sm); background:#fbfcfe; padding:12px; }
 .monitor-layout { align-items:flex-start; }

@@ -16,7 +16,7 @@ import gradio as gr
 from .backend import RunConfig
 from .config import DEFAULT_MODELS, detect_targets
 from .dashboard import DashboardRender, MonitorRender
-from .io_utils import available_run_dirs, latest_json_in_dir, safe_read_json
+from .io_utils import latest_json_in_dir, run_dir_choices, safe_read_json
 from .molecules import (
     download_all_pools_csv,
     download_current_pool_csv,
@@ -73,6 +73,7 @@ def monitor_outputs(render: MonitorRender) -> tuple[Any, ...]:
         render.timeline_html,
         render.monitor_metrics_df,
         render.errors_html,
+        render.log_diagnostics,
         render.logs_text,
         recovery_card(active, run_dir=render.run_dir_state, run_json=render.run_json_state, is_running=pid_running(active.pid) if active else False),
         render.run_dir_state,
@@ -122,6 +123,11 @@ def load_selected_run(folder: str):
     run_dir = LOG_ROOT / folder if folder else None
     run_json = latest_json_in_dir(run_dir)
     return review_outputs(render_snapshot(f"Loaded run: {folder}" if run_json else "No run selected.", run_dir, run_json, safe_read_json(run_json)))
+
+
+def refresh_run_choices():
+    from .config import LOG_ROOT
+    return gr.update(choices=run_dir_choices(LOG_ROOT))
 
 
 def review_active_run(active_run_dir_str: str, active_run_json_str: str):
@@ -180,6 +186,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     timeline_html = gr.HTML()
                     with gr.Accordion("Errors and logs", open=False):
                         errors_html = gr.HTML()
+                        log_diagnostics = gr.HTML()
                         logs_text = gr.Textbox(label="CLI stdout/stderr", lines=18, interactive=False)
                     timer = gr.Timer(10.0)
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
@@ -198,7 +205,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     report_file = gr.DownloadButton("Download run report", value=None, variant="secondary")
                     gr.Markdown("<p class='section-title'>Load Previous Run</p>")
                     from .config import LOG_ROOT
-                    run_selector = gr.Dropdown(choices=available_run_dirs(LOG_ROOT), label="Run folder")
+                    run_selector = gr.Dropdown(choices=run_dir_choices(LOG_ROOT), label="Run folder")
+                    refresh_runs_btn = gr.Button("Refresh run list", variant="secondary")
                     load_btn = gr.Button("Load selected run")
                     review_active_btn = gr.Button("Review active run", variant="secondary")
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
@@ -265,6 +273,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         timeline_html,
         monitor_metrics_df,
         errors_html,
+        log_diagnostics,
         logs_text,
         recovery_html,
         active_run_dir_state,
@@ -288,6 +297,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     run_btn.click(start_run, [target, max_iter, model, api_key], monitor_outputs_components, queue=False, show_progress="hidden")
     latest_btn.click(recover_active_run_with_logs, [], monitor_outputs_components, queue=False, show_progress="hidden")
     timer.tick(refresh_active_run, [], monitor_outputs_components, queue=False, show_progress="hidden")
+    refresh_runs_btn.click(refresh_run_choices, [], [run_selector], queue=False, show_progress="hidden")
     load_btn.click(load_selected_run, [run_selector], review_outputs_components, queue=False, show_progress="hidden")
     review_active_btn.click(review_active_run, [active_run_dir_state, active_run_json_state], review_outputs_components, queue=False, show_progress="hidden")
     pool_select.change(update_pool_view, [review_run_dir_state, review_run_json_state, pool_select], [pool_badge, mol_table], queue=False, show_progress="hidden")
