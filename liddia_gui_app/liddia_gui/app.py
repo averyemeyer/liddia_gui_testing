@@ -36,6 +36,7 @@ def choose_server_port(host: str = "127.0.0.1", preferred: int = 7960) -> int:
     env_port = os.environ.get("GRADIO_SERVER_PORT")
     if env_port:
         return int(env_port)
+    preferred = int(os.environ.get("LIDDIA_GUI_PREFERRED_PORT", preferred))
 
     for port in range(preferred, preferred + 100):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

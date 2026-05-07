@@ -13,6 +13,7 @@ $RepoDir = Split-Path -Parent $ScriptDir
 
 Set-Location $ScriptDir
 $env:GRADIO_SERVER_PORT = $Port
+$env:LIDDIA_RUN_PYTHON = $Python
 
 Write-Host "Repository: $RepoDir"
 Write-Host "Python: $Python"

@@ -104,6 +104,12 @@ def classify_log_text(text: str) -> list[dict[str, str]]:
             "The model did not return an action/input pair LIDDIA could parse.",
             "Try a different model or inspect the raw response in the run JSON/logs.",
         )
+    if "get_metadata_from_response" in lower and "invalid syntax" in lower:
+        add(
+            "Model response format parsing failed",
+            "The model returned action/input text with extra formatting that LIDDIA could not parse.",
+            "Retry with a model that follows the required plain `Action:` and `Input:` format, or make the core parser more tolerant.",
+        )
     if "bad file descriptor" in lower:
         add(
             "Subprocess stream warning",

@@ -44,6 +44,14 @@ chmod +x liddia_gui_app/launch_gui.command
 ./liddia_gui_app/launch_gui.command
 ```
 
+The macOS/Linux launcher activates `CONDA_ENV=liddia-mac` by default on the original development machine. For another environment, edit `CONDA_ENV` in the script or launch with:
+
+```bash
+CONDA_ENV=my-liddia-env ./liddia_gui_app/launch_gui.command
+```
+
+You can also set `CONDA_SH` if conda is installed somewhere other than `~/anaconda3`.
+
 Windows PowerShell:
 
 ```powershell
@@ -84,7 +92,7 @@ cd /Users/meyer.1938/Desktop/LIDDIA/liddia_gui_app
 GRADIO_SERVER_PORT=7961 /Users/meyer.1938/anaconda3/envs/liddia-mac/bin/python -m liddia_gui.app
 ```
 
-The app picks the first available port from `7960` upward unless `GRADIO_SERVER_PORT` is set. Use the same Python environment for the GUI that you use to run LIDDIA itself.
+The app picks the first available port from `7960` upward unless `GRADIO_SERVER_PORT` is set. Use the same Python environment for the GUI that you use to run LIDDIA itself. If you launch the GUI in one environment but want run subprocesses to use another Python, set `LIDDIA_RUN_PYTHON=/path/to/python`.
 
 ## Typical Workflow
 

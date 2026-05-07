@@ -5,6 +5,7 @@ for every LIDDIA version. Put that knowledge behind a backend adapter.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -51,13 +52,23 @@ class LiddiaV2Backend:
 
     name = "liddia_v2"
 
-    def __init__(self, run_py: Path = RUN_PY, log_root: Path = LOG_ROOT):
+    def __init__(self, run_py: Path = RUN_PY, log_root: Path = LOG_ROOT, python_executable: str | None = None):
         self.run_py = run_py
         self.log_root = log_root
+        self.python_executable = python_executable
+
+    @classmethod
+    def resolve_python_executable(cls) -> str:
+        """Choose the Python used for LIDDIA subprocesses.
+
+        Launchers may set LIDDIA_RUN_PYTHON after activating a local conda/env.
+        Otherwise, use the same interpreter that is running the GUI.
+        """
+        return os.environ.get("LIDDIA_RUN_PYTHON") or sys.executable
 
     def build_command(self, config: RunConfig) -> list[str]:
         cmd = [
-            sys.executable,
+            self.python_executable or self.resolve_python_executable(),
             "-u",
             str(self.run_py),
             "--target",

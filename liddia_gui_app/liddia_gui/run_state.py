@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -59,6 +60,21 @@ def clear_lock(log_root: Path = LOG_ROOT) -> None:
 def pid_running(pid: int | None) -> bool:
     if not pid:
         return False
+    if os.name != "nt":
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "stat="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+            if result.stdout.strip().startswith("Z"):
+                return False
+        except Exception:
+            pass
     try:
         os.kill(pid, 0)
         return True
