@@ -119,6 +119,39 @@ def classify_log_text(text: str) -> list[dict[str, str]]:
     return findings
 
 
+def failure_summary_html(data: dict | None, log_text: str = "") -> str:
+    """Render the most actionable failure summary from run JSON plus logs."""
+    text_parts = [log_text or ""]
+    if data:
+        error = data.get("error_message")
+        if error:
+            text_parts.append(str(error))
+    findings = classify_log_text("\n".join(text_parts))
+    if not findings and data and data.get("success") is False:
+        findings = [
+            {
+                "title": "Run failed",
+                "detail": "The run JSON reports success=false, but the failure did not match a known diagnostic pattern.",
+                "action": "Open Errors and logs, then inspect the traceback or run JSON.",
+            }
+        ]
+    if not findings:
+        return "<div class='empty-panel'>No run failure detected.</div>"
+
+    primary = findings[0]
+    extra = ""
+    if len(findings) > 1:
+        extra = "<ul>" + "".join(f"<li>{html.escape(f['title'])}</li>" for f in findings[1:]) + "</ul>"
+    return (
+        "<div class='failure-summary'>"
+        f"<div class='status-row'><span class='status-badge status-failed'>ATTENTION</span><strong>{html.escape(primary['title'])}</strong></div>"
+        f"<p>{html.escape(primary['detail'])}</p>"
+        f"<code>{html.escape(primary['action'])}</code>"
+        f"{extra}"
+        "</div>"
+    )
+
+
 def log_diagnostics_html(text: str) -> str:
     findings = classify_log_text(text)
     if not findings:

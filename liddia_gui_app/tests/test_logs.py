@@ -1,4 +1,4 @@
-from liddia_gui_app.liddia_gui.logs import active_log_text, classify_log_text, log_diagnostics_html, tail_text
+from liddia_gui_app.liddia_gui.logs import active_log_text, classify_log_text, failure_summary_html, log_diagnostics_html, tail_text
 from liddia_gui_app.liddia_gui.run_state import ActiveRun, write_lock
 
 
@@ -54,3 +54,21 @@ def test_classify_log_text_detects_model_format_parse_failure():
 
 def test_log_diagnostics_html_returns_empty_panel_without_matches():
     assert "No recognized runtime issues" in log_diagnostics_html("plain progress output")
+
+
+def test_failure_summary_uses_run_json_error_message():
+    html = failure_summary_html(
+        {
+            "success": False,
+            "error_message": "File liddia/utils.py in get_metadata_from_response\nSyntaxError: invalid syntax",
+        }
+    )
+
+    assert "Model response format parsing failed" in html
+    assert "ATTENTION" in html
+
+
+def test_failure_summary_has_generic_failed_fallback():
+    html = failure_summary_html({"success": False, "error_message": "surprising failure"})
+
+    assert "Run failed" in html

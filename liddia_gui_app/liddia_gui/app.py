@@ -73,6 +73,7 @@ def monitor_outputs(render: MonitorRender) -> tuple[Any, ...]:
         render.elapsed_html,
         render.monitor_overview_html,
         render.timeline_html,
+        render.failure_summary_html,
         render.monitor_metrics_df,
         render.errors_html,
         render.log_diagnostics,
@@ -196,6 +197,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     progress_html = gr.HTML()
                     elapsed_html = gr.HTML()
                     timeline_html = gr.HTML()
+                    failure_summary = gr.HTML()
                     with gr.Accordion("Errors and logs", open=False):
                         errors_html = gr.HTML()
                         log_diagnostics = gr.HTML()
@@ -283,6 +285,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         elapsed_html,
         monitor_overview_html,
         timeline_html,
+        failure_summary,
         monitor_metrics_df,
         errors_html,
         log_diagnostics,

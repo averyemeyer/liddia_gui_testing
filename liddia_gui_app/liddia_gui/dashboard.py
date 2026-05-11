@@ -8,7 +8,7 @@ from typing import Any
 import gradio as gr
 import pandas as pd
 
-from .logs import active_log_text, log_diagnostics_html
+from .logs import active_log_text, failure_summary_html, log_diagnostics_html
 from .molecules import enrich_parsed_with_memory, molecule_table, pool_choices, selected_pool_badge
 from .parsers import compact_metric_display_rows, metric_display_rows, parse_run_data, raw_json_text, requirements_rows
 from .trends import iteration_rollup, metric_choices, trend_plot, trend_rows
@@ -23,6 +23,7 @@ class MonitorRender:
     elapsed_html: str
     monitor_overview_html: str
     timeline_html: str
+    failure_summary_html: str
     monitor_metrics_df: pd.DataFrame
     errors_html: str
     log_diagnostics: str
@@ -52,6 +53,7 @@ class MonitorRender:
             elapsed_html=elapsed_panel(parsed),
             monitor_overview_html=run_overview(parsed, run_json),
             timeline_html=action_timeline(parsed),
+            failure_summary_html=failure_summary_html(data, logs if isinstance(logs, str) else ""),
             monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed)),
             errors_html=error_panel(parsed),
             log_diagnostics=log_diagnostics_html(logs) if include_logs else gr.skip(),

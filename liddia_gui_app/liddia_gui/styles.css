@@ -49,6 +49,11 @@ footer { display:none!important; }
 .diagnostic-item strong { display:block; color:#9a3412; margin-bottom:4px; }
 .diagnostic-item p { margin:0 0 8px; font-size:13px; color:#7c2d12; }
 .diagnostic-item code { display:block; white-space:normal; background:#ffedd5; color:#7c2d12; padding:6px 8px; border-radius:6px; font-size:12px; }
+.failure-summary { border:1px solid #fecaca; border-radius:8px; background:#fff7f7; color:#7f1d1d; padding:12px 14px; margin:12px 0; }
+.failure-summary strong { color:#991b1b; font-size:14px; }
+.failure-summary p { margin:0 0 8px; font-size:13px; color:#7f1d1d; }
+.failure-summary code { display:block; white-space:normal; background:#fee2e2; color:#7f1d1d; padding:7px 9px; border-radius:6px; font-size:12px; }
+.failure-summary ul { margin:8px 0 0; padding-left:20px; font-size:12px; }
 .preflight-panel { display:flex; flex-direction:column; gap:9px; }
 .preflight-row { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; border:1px solid var(--line); border-radius:8px; background:#fbfcfe; padding:10px; }
 .preflight-row strong { display:block; color:var(--text); font-size:13px; margin-bottom:2px; }
