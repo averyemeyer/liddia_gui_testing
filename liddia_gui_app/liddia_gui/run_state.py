@@ -61,6 +61,10 @@ def clear_lock(log_root: Path = LOG_ROOT) -> None:
     lock_path(log_root).unlink(missing_ok=True)
 
 
+def clear_last_run(log_root: Path = LOG_ROOT) -> None:
+    last_run_path(log_root).unlink(missing_ok=True)
+
+
 def write_last_run(run_dir: Path | None, run_json: Path | None, log_root: Path = LOG_ROOT) -> None:
     if not run_dir and not run_json:
         return

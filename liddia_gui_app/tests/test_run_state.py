@@ -2,7 +2,7 @@ from pathlib import Path
 
 import json
 
-from liddia_gui_app.liddia_gui.run_state import read_last_run, write_last_run
+from liddia_gui_app.liddia_gui.run_state import clear_last_run, last_run_path, read_last_run, write_last_run
 
 
 def test_last_run_roundtrip(tmp_path):
@@ -14,6 +14,18 @@ def test_last_run_roundtrip(tmp_path):
     write_last_run(run_dir, run_json, tmp_path)
 
     assert read_last_run(tmp_path) == (run_dir, run_json)
+
+
+def test_clear_last_run_removes_pointer(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    run_json = run_dir / "EGFR.json"
+    run_json.write_text("{}")
+    write_last_run(run_dir, run_json, tmp_path)
+
+    clear_last_run(tmp_path)
+
+    assert not last_run_path(tmp_path).exists()
 
 
 def test_last_run_ignores_missing_paths(tmp_path):
