@@ -15,9 +15,15 @@ def is_completed(parsed: dict[str, Any]) -> bool:
     return bool((parsed.get("runtime") or {}).get("end_time"))
 
 
+def has_run_content(parsed: dict[str, Any]) -> bool:
+    runtime = parsed.get("runtime") or {}
+    task = parsed.get("task") or {}
+    return bool(parsed.get("steps") or runtime.get("start_time") or task.get("target") or parsed.get("model") or parsed.get("error_message"))
+
+
 def status_badge(parsed: dict[str, Any], recovered: bool = False) -> str:
-    if not parsed.get("steps") and not (parsed.get("runtime") or {}).get("start_time"):
-        label, css = "IDLE", "status-idle"
+    if not has_run_content(parsed):
+        label, css = "READY", "status-idle"
     elif parsed.get("error_message"):
         label, css = "ERROR", "status-failed"
     elif is_completed(parsed):
@@ -25,11 +31,15 @@ def status_badge(parsed: dict[str, Any], recovered: bool = False) -> str:
     else:
         label, css = "RUNNING", "status-running"
     extra = "<span class='status-badge status-info'>Recovered active run from disk</span>" if recovered else ""
-    updated = html.escape(str((parsed.get("runtime") or {}).get("updated_at", "—")))
-    return f"<div class='status-row'><span class='status-badge {css}'>{label}</span><span class='helper-text'>Last update: {updated}</span>{extra}</div>"
+    updated = (parsed.get("runtime") or {}).get("updated_at")
+    update_html = f"<span class='helper-text'>Last update: {html.escape(str(updated))}</span>" if updated else ""
+    return f"<div class='status-row'><span class='status-badge {css}'>{label}</span>{update_html}{extra}</div>"
 
 
 def run_overview(parsed: dict[str, Any], run_json: Path | None) -> str:
+    if not has_run_content(parsed):
+        return "<div class='empty-panel quiet-empty'>No run selected.</div>"
+
     task = parsed.get("task") or {}
     runtime = parsed.get("runtime") or {}
     final_pool = parsed.get("final_pool") or {}
@@ -66,6 +76,9 @@ def run_overview(parsed: dict[str, Any], run_json: Path | None) -> str:
 
 
 def elapsed_panel(parsed: dict[str, Any]) -> str:
+    if not has_run_content(parsed):
+        return ""
+
     runtime = parsed.get("runtime") or {}
     elapsed = runtime.get("elapsed_seconds")
     if elapsed is None:
@@ -85,6 +98,14 @@ def elapsed_panel(parsed: dict[str, Any]) -> str:
 
 
 def progress(parsed: dict[str, Any]) -> str:
+    if not has_run_content(parsed):
+        return (
+            "<div class='idle-state'>"
+            "<strong>Ready for a run</strong>"
+            "<span>Choose a target, confirm the system check, then launch LIDDIA.</span>"
+            "</div>"
+        )
+
     runtime = parsed.get("runtime") or {}
     current = runtime.get("current_iter", parsed.get("step_count", 0))
     max_iter = runtime.get("max_iter") or (parsed.get("task") or {}).get("resource") or current or 1
@@ -105,7 +126,7 @@ def progress(parsed: dict[str, Any]) -> str:
 def action_timeline(parsed: dict[str, Any]) -> str:
     steps = parsed.get("steps") or []
     if not steps:
-        return "<div class='timeline-stack'><div class='timeline-card'><span class='dot dot-muted'></span><strong>Waiting for first iteration</strong></div></div>"
+        return ""
     cards = []
     for step in steps:
         goal = (step.get("goal_eval") or {}).get("answer") or "—"
@@ -128,7 +149,7 @@ def error_panel(parsed: dict[str, Any]) -> str:
     error = parsed.get("error_message")
     step_errors = [s for s in parsed.get("steps") or [] if s.get("error_message")]
     if not error and not step_errors:
-        return "<div class='empty-panel'>No run errors reported.</div>"
+        return ""
     pieces = []
     if error:
         pieces.append(f"<pre>{html.escape(str(error))}</pre>")

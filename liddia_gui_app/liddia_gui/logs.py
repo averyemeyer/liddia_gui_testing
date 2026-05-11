@@ -142,7 +142,7 @@ def failure_summary_html(data: dict | None, log_text: str = "") -> str:
             }
         ]
     if not findings:
-        return "<div class='empty-panel'>No run failure detected.</div>"
+        return ""
 
     primary = findings[0]
     extra = ""

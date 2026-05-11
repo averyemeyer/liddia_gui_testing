@@ -15,6 +15,12 @@ from .trends import iteration_rollup, metric_choices, trend_plot, trend_rows
 from .ui_components import action_timeline, elapsed_panel, error_panel, progress, run_overview, status_badge
 
 
+MONITOR_METRIC_COLUMNS = ["Metric", "Value"]
+METRIC_COLUMNS = ["Metric", "Min", "Median", "Max"]
+REQUIREMENT_COLUMNS = ["Requirement"]
+TREND_ROLLUP_BASE_COLUMNS = ["Iteration", "Action", "Pool", "Goal", "Size", "Diversity"]
+
+
 @dataclass(frozen=True)
 class MonitorRender:
     status_text: str
@@ -54,7 +60,7 @@ class MonitorRender:
             monitor_overview_html=run_overview(parsed, run_json),
             timeline_html=action_timeline(parsed),
             failure_summary_html=failure_summary_html(data, logs if isinstance(logs, str) else ""),
-            monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed)),
+            monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed), columns=MONITOR_METRIC_COLUMNS),
             errors_html=error_panel(parsed),
             log_diagnostics=log_diagnostics_html(logs) if include_logs else gr.skip(),
             logs_text=logs,
@@ -95,11 +101,15 @@ class DashboardRender:
         run_json_text = str(run_json or "")
         parsed = enrich_parsed_with_memory(parse_run_data(data), run_dir_text, run_json_text)
         overview = run_overview(parsed, run_json)
-        metrics = pd.DataFrame(metric_display_rows(parsed))
+        metrics = pd.DataFrame(metric_display_rows(parsed), columns=METRIC_COLUMNS)
         pool_ids, selected_pool = pool_choices(run_dir_text, run_json_text)
         trend_data = trend_rows(parsed)
         choices = metric_choices(trend_data)
         selected_metric = choices[1] if len(choices) > 1 else "All"
+        requirements = pd.DataFrame(requirements_rows(parsed), columns=REQUIREMENT_COLUMNS)
+        trend_df = pd.DataFrame(iteration_rollup(parsed))
+        if trend_df.empty:
+            trend_df = pd.DataFrame(columns=TREND_ROLLUP_BASE_COLUMNS)
         return cls(
             status_text=message,
             status_html=status_badge(parsed, recovered=recovered),
@@ -107,10 +117,10 @@ class DashboardRender:
             elapsed_html=elapsed_panel(parsed),
             monitor_overview_html=overview,
             timeline_html=action_timeline(parsed),
-            monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed)),
+            monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed), columns=MONITOR_METRIC_COLUMNS),
             results_overview_html=overview,
             metrics_df=metrics,
-            requirements_df=pd.DataFrame(requirements_rows(parsed)),
+            requirements_df=requirements,
             errors_html=error_panel(parsed),
             raw_json=raw_json_text(data),
             logs_text=active_log_text(),
@@ -120,7 +130,7 @@ class DashboardRender:
             trend_state=pd.DataFrame(trend_data),
             trend_plot_component=trend_plot(trend_data, selected_metric),
             trend_metric_select=gr.update(choices=choices, value=selected_metric),
-            trend_df=pd.DataFrame(iteration_rollup(parsed)),
+            trend_df=trend_df,
             run_dir_state=run_dir_text,
             run_json_state=run_json_text,
         )

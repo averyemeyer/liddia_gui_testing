@@ -208,7 +208,7 @@ def smiles_image(smiles: str) -> str:
 def molecule_table(run_dir_str: str, run_json_str: str, pool_id: str | None, max_rows: int = 100) -> pd.DataFrame:
     df = _pool_dataframe(run_dir_str, run_json_str, pool_id)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Index", "Molecule"])
     out = df.copy()
     if "SMILES" in out.columns:
         out.insert(0, "Molecule", out["SMILES"].map(smiles_image))

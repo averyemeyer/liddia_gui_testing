@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import gradio as gr
+import pandas as pd
 
 from .backend import RunConfig
 from .config import DEFAULT_MODELS, detect_targets
@@ -177,6 +178,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     active_run_json_state = gr.State("")
     review_run_dir_state = gr.State("")
     review_run_json_state = gr.State("")
+    initial_monitor = render_monitor_snapshot("No active run.", None, None, None)
 
     with gr.Tabs(elem_classes=["app-shell"]):
         with gr.Tab("Monitor"):
@@ -198,53 +200,53 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Live Monitor</p>")
                     gr.Markdown("<p class='helper-text'>Track progress, elapsed time, current stage, and recent actions.</p>")
-                    status_text = gr.Textbox(label="Status", interactive=False, visible=False)
-                    status_html = gr.HTML()
-                    progress_html = gr.HTML()
-                    elapsed_html = gr.HTML()
-                    timeline_html = gr.HTML()
-                    failure_summary = gr.HTML()
+                    status_text = gr.Textbox(label="Status", value=initial_monitor.status_text, interactive=False, visible=False)
+                    status_html = gr.HTML(initial_monitor.status_html)
+                    progress_html = gr.HTML(initial_monitor.progress_html)
+                    elapsed_html = gr.HTML(initial_monitor.elapsed_html)
+                    timeline_html = gr.HTML(initial_monitor.timeline_html)
+                    failure_summary = gr.HTML(initial_monitor.failure_summary_html)
                     with gr.Accordion("Errors and logs", open=False):
-                        errors_html = gr.HTML()
-                        log_diagnostics = gr.HTML()
-                        logs_text = gr.Textbox(label="CLI stdout/stderr", lines=18, interactive=False)
+                        errors_html = gr.HTML(initial_monitor.errors_html)
+                        log_diagnostics = gr.HTML("")
+                        logs_text = gr.Textbox(label="CLI stdout/stderr", value="", lines=18, interactive=False)
                     timer = gr.Timer(10.0)
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Metrics Snapshot</p>")
-                    monitor_metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=True, datatype="html", column_widths=["55%", "45%"], max_height=300)
+                    monitor_metrics_df = gr.Dataframe(value=initial_monitor.monitor_metrics_df, label="Final pool metrics", interactive=False, wrap=True, show_label=True, datatype="html", column_widths=["55%", "45%"], max_height=300)
                     gr.Markdown("<p class='section-title'>Run Overview</p>")
-                    monitor_overview_html = gr.HTML()
+                    monitor_overview_html = gr.HTML(initial_monitor.monitor_overview_html)
                     gr.Markdown("<p class='section-title'>Run Recovery</p>")
-                    recovery_html = gr.HTML()
+                    recovery_html = gr.HTML(recovery_card(None))
 
         with gr.Tab("Results"):
             with gr.Row():
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Run Summary</p>")
                     results_overview_html = gr.HTML()
-                    report_file = gr.DownloadButton("Download run report", value=None, variant="secondary")
                     gr.Markdown("<p class='section-title'>Load Previous Run</p>")
                     from .config import LOG_ROOT
                     run_selector = gr.Dropdown(choices=run_dir_choices(LOG_ROOT), label="Run folder")
                     refresh_runs_btn = gr.Button("Refresh run list", variant="secondary")
                     load_btn = gr.Button("Load selected run")
                     review_active_btn = gr.Button("Review active run", variant="secondary")
+                    report_file = gr.DownloadButton("Download loaded run report", value=None, variant="secondary")
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Molecule Viewer (2D)</p>")
                     gr.Markdown("<p class='helper-text'>Molecule tables and property results appear after a run is loaded or completed.</p>")
+                    gr.HTML("<div class='idle-state results-idle'><strong>No run loaded</strong><span>Load a previous run or review the active run to inspect pools, metrics, and exports.</span></div>")
                     pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
                     pool_badge = gr.HTML()
+                    mol_table = gr.Dataframe(value=pd.DataFrame(columns=["Index", "Molecule"]), label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
                     with gr.Row(elem_classes=["results-actions"]):
                         download_current = gr.DownloadButton("Download current pool", variant="secondary")
                         download_all = gr.DownloadButton("Download all molecule property sets", variant="secondary")
-                    mol_table = gr.Dataframe(label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
-                    with gr.Accordion("Raw JSON", open=False):
-                        raw_json = gr.Code(label="Latest run JSON", language="json")
+                    raw_json = gr.Code(label="Latest run JSON", language="json", visible=False)
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Final Pool Metrics</p>")
-                    metrics_df = gr.Dataframe(label="Final pool metrics", interactive=False, wrap=True, show_label=False, datatype="html", max_height=320)
+                    metrics_df = gr.Dataframe(value=pd.DataFrame(columns=["Metric", "Min", "Median", "Max"]), label="Final pool metrics", interactive=False, wrap=True, show_label=False, datatype="html", max_height=320)
                     gr.Markdown("<p class='section-title'>Task Requirements</p>")
-                    requirements_df = gr.Dataframe(label="Task requirements", interactive=False, wrap=True, show_label=False, max_height=320)
+                    requirements_df = gr.Dataframe(value=pd.DataFrame(columns=["Requirement"]), label="Task requirements", interactive=False, wrap=True, show_label=False, max_height=320)
 
         with gr.Tab("3D Viewer"):
             with gr.Row(elem_classes=["viewer3d-layout"]):
