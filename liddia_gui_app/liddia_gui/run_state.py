@@ -41,6 +41,10 @@ def last_run_path(log_root: Path = LOG_ROOT) -> Path:
     return log_root / ".last_run.json"
 
 
+def dismissed_run_path(log_root: Path = LOG_ROOT) -> Path:
+    return log_root / ".dismissed_run.json"
+
+
 def read_lock(log_root: Path = LOG_ROOT) -> ActiveRun | None:
     path = lock_path(log_root)
     if not path.exists():
@@ -62,7 +66,20 @@ def clear_lock(log_root: Path = LOG_ROOT) -> None:
 
 
 def clear_last_run(log_root: Path = LOG_ROOT) -> None:
+    run_dir, run_json = read_last_run(log_root)
     last_run_path(log_root).unlink(missing_ok=True)
+    latest_mtime = 0.0
+    for path in (run_json, run_dir / "run_state.json" if run_dir else None):
+        if path and path.exists():
+            latest_mtime = max(latest_mtime, path.stat().st_mtime)
+    payload = {
+        "run_dir": str(run_dir) if run_dir else None,
+        "run_json": str(run_json) if run_json else None,
+        "dismissed_mtime": latest_mtime,
+        "updated_at": datetime.now().isoformat(),
+    }
+    log_root.mkdir(parents=True, exist_ok=True)
+    dismissed_run_path(log_root).write_text(json.dumps(payload, indent=2))
 
 
 def write_last_run(run_dir: Path | None, run_json: Path | None, log_root: Path = LOG_ROOT) -> None:
@@ -75,6 +92,7 @@ def write_last_run(run_dir: Path | None, run_json: Path | None, log_root: Path =
         "updated_at": datetime.now().isoformat(),
     }
     last_run_path(log_root).write_text(json.dumps(payload, indent=2))
+    dismissed_run_path(log_root).unlink(missing_ok=True)
 
 
 def read_last_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | None]:
@@ -98,8 +116,18 @@ def latest_terminal_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | 
     """Find the most recent completed/failed run_state when no pointer exists."""
     if not log_root.exists():
         return None, None
+    dismissed_mtime = 0.0
+    dismissed_path = dismissed_run_path(log_root)
+    if dismissed_path.exists():
+        try:
+            dismissed_mtime = float(json.loads(dismissed_path.read_text()).get("dismissed_mtime") or 0.0)
+        except Exception:
+            dismissed_mtime = 0.0
     candidates: list[tuple[float, Path, Path | None]] = []
     for state_path in log_root.glob("*/run_state.json"):
+        state_mtime = state_path.stat().st_mtime
+        if state_mtime <= dismissed_mtime:
+            continue
         try:
             data = json.loads(state_path.read_text())
         except Exception:
@@ -114,7 +142,7 @@ def latest_terminal_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | 
             json_candidates = [p for p in run_dir.glob("*.json") if p.name != "run_state.json"]
             run_json = sorted(json_candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0] if json_candidates else None
         if run_json:
-            candidates.append((state_path.stat().st_mtime, run_dir, run_json))
+            candidates.append((state_mtime, run_dir, run_json))
     if not candidates:
         return None, None
     _, run_dir, run_json = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
