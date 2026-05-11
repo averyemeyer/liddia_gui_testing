@@ -23,6 +23,7 @@ from .molecules import (
     molecule_table,
     selected_pool_badge,
 )
+from .preflight import preflight_can_start, preflight_html, run_preflight
 from .reports import build_report_bundle_file
 from .runner import launch_run, recover_active_run
 from .run_state import pid_running, read_lock
@@ -101,6 +102,9 @@ def review_outputs(render: DashboardRender) -> tuple[Any, ...]:
 
 
 def start_run(target: str, max_iter: int, model: str, api_key: str):
+    checks = run_preflight(target=target, api_key=api_key)
+    if not preflight_can_start(checks):
+        return monitor_outputs(render_monitor_snapshot("System check failed. Fix blocking items before launching.", None, None, None, include_logs=True))
     msg, snap = launch_run(RunConfig(target=target, max_iter=int(max_iter), model=model), api_key)
     return monitor_outputs(render_monitor_snapshot(msg, snap.run_dir, snap.run_json, snap.data, include_logs=True))
 
@@ -149,6 +153,10 @@ def update_pool_view(run_dir_str: str, run_json_str: str, pool_id: str | None):
     return selected_pool_badge(pool_id), molecule_table(run_dir_str, run_json_str, pool_id)
 
 
+def refresh_preflight(target_name: str, api_key_value: str):
+    return preflight_html(run_preflight(target=target_name, api_key=api_key_value))
+
+
 with gr.Blocks(title="LIDDIA GUI v2") as demo:
     css_path = Path(__file__).with_name("styles.css")
     gr.HTML(f"<style>{css_path.read_text()}</style>")
@@ -175,6 +183,9 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     provider = gr.Dropdown(["Anthropic (current)", "OpenAI (planned)", "Local model (planned)"], value="Anthropic (current)", label="LLM provider", interactive=False)
                     model = gr.Dropdown(DEFAULT_MODELS, value=DEFAULT_MODELS[0], label="Model", allow_custom_value=True)
                     api_key = gr.Textbox(label="Anthropic API key", type="password")
+                    with gr.Accordion("System Check", open=False):
+                        preflight_panel = gr.HTML(preflight_html(run_preflight(target=detect_targets()[0], api_key="")))
+                        preflight_btn = gr.Button("Refresh system check", variant="secondary")
                     run_btn = gr.Button("Run LIDDIA", variant="primary")
                     latest_btn = gr.Button("Load latest / recover", variant="secondary")
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
@@ -296,6 +307,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         review_run_json_state,
     ]
     run_btn.click(start_run, [target, max_iter, model, api_key], monitor_outputs_components, queue=False, show_progress="hidden")
+    preflight_btn.click(refresh_preflight, [target, api_key], [preflight_panel], queue=False, show_progress="hidden")
     latest_btn.click(recover_active_run_with_logs, [], monitor_outputs_components, queue=False, show_progress="hidden")
     timer.tick(refresh_active_run, [], monitor_outputs_components, queue=False, show_progress="hidden")
     refresh_runs_btn.click(refresh_run_choices, [], [run_selector], queue=False, show_progress="hidden")
