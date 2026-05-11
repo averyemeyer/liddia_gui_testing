@@ -25,7 +25,6 @@ from .molecules import (
 )
 from .preflight import preflight_can_start, preflight_html, run_preflight
 from .reports import build_report_bundle_file
-from .run_config import setup_values_from_run_data
 from .runner import launch_run, recover_active_run
 from .run_state import clear_last_run, pid_running, read_lock
 from .trends import apply_metric_filter
@@ -164,16 +163,6 @@ def clear_monitor_state():
     return monitor_outputs(render_monitor_snapshot("Monitor cleared.", None, None, None, include_logs=True))
 
 
-def use_monitor_settings(active_run_json_str: str):
-    run_json = Path(active_run_json_str) if active_run_json_str else None
-    values = setup_values_from_run_data(safe_read_json(run_json))
-    return (
-        gr.update(value=values.target) if values.target else gr.skip(),
-        gr.update(value=values.max_iter) if values.max_iter is not None else gr.skip(),
-        gr.update(value=values.model) if values.model else gr.skip(),
-    )
-
-
 with gr.Blocks(title="LIDDIA GUI v2") as demo:
     css_path = Path(__file__).with_name("styles.css")
     gr.HTML(f"<style>{css_path.read_text()}</style>")
@@ -227,7 +216,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     monitor_overview_html = gr.HTML()
                     gr.Markdown("<p class='section-title'>Run Recovery</p>")
                     recovery_html = gr.HTML()
-                    use_monitor_settings_btn = gr.Button("Use monitor settings", variant="secondary")
                     review_monitor_btn = gr.Button("Review monitor run", variant="secondary")
 
         with gr.Tab("Results"):
@@ -332,7 +320,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     preflight_btn.click(refresh_preflight, [target, api_key], [preflight_panel], queue=False, show_progress="hidden")
     latest_btn.click(recover_active_run_with_logs, [], monitor_outputs_components, queue=False, show_progress="hidden")
     clear_monitor_btn.click(clear_monitor_state, [], monitor_outputs_components, queue=False, show_progress="hidden")
-    use_monitor_settings_btn.click(use_monitor_settings, [active_run_json_state], [target, max_iter, model], queue=False, show_progress="hidden")
     review_monitor_btn.click(review_active_run, [active_run_dir_state, active_run_json_state], review_outputs_components, queue=False, show_progress="hidden")
     timer.tick(refresh_active_run, [], monitor_outputs_components, queue=False, show_progress="hidden")
     refresh_runs_btn.click(refresh_run_choices, [], [run_selector], queue=False, show_progress="hidden")
