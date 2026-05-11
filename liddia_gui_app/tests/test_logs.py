@@ -52,6 +52,12 @@ def test_classify_log_text_detects_model_format_parse_failure():
     assert "Model response format parsing failed" in [finding["title"] for finding in findings]
 
 
+def test_classify_log_text_detects_goal_answer_parse_failure():
+    findings = classify_log_text("File liddia/utils.py in get_goal_answer_response\nIndexError: list index out of range")
+
+    assert "Goal-check response parsing failed" in [finding["title"] for finding in findings]
+
+
 def test_log_diagnostics_html_returns_empty_panel_without_matches():
     assert "No recognized runtime issues" in log_diagnostics_html("plain progress output")
 

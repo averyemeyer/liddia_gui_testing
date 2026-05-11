@@ -110,6 +110,12 @@ def classify_log_text(text: str) -> list[dict[str, str]]:
             "The model returned action/input text with extra formatting that LIDDIA could not parse.",
             "Retry with a model that follows the required plain `Action:` and `Input:` format, or make the core parser more tolerant.",
         )
+    if "get_goal_answer_response" in lower and "indexerror: list index out of range" in lower:
+        add(
+            "Goal-check response parsing failed",
+            "The model did not return the expected plain `Answer:` line for the goal check.",
+            "Retry with a model that follows the required evaluator format, or make the core goal-check parser more tolerant.",
+        )
     if "bad file descriptor" in lower:
         add(
             "Subprocess stream warning",

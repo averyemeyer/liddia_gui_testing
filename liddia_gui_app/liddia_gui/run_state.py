@@ -76,7 +76,7 @@ def write_last_run(run_dir: Path | None, run_json: Path | None, log_root: Path =
 def read_last_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | None]:
     path = last_run_path(log_root)
     if not path.exists():
-        return None, None
+        return latest_terminal_run(log_root)
     try:
         data = json.loads(path.read_text())
     except Exception:
@@ -87,6 +87,33 @@ def read_last_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | None]:
         run_json = None
     if run_dir and not run_dir.exists():
         run_dir = run_json.parent if run_json else None
+    return run_dir, run_json
+
+
+def latest_terminal_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | None]:
+    """Find the most recent completed/failed run_state when no pointer exists."""
+    if not log_root.exists():
+        return None, None
+    candidates: list[tuple[float, Path, Path | None]] = []
+    for state_path in log_root.glob("*/run_state.json"):
+        try:
+            data = json.loads(state_path.read_text())
+        except Exception:
+            continue
+        if data.get("status") not in {"completed", "failed", "cancelled"}:
+            continue
+        run_dir = Path(data["run_dir"]) if data.get("run_dir") else state_path.parent
+        run_json = Path(data["run_json_path"]) if data.get("run_json_path") else None
+        if run_json and not run_json.exists():
+            run_json = None
+        if run_json is None:
+            json_candidates = [p for p in run_dir.glob("*.json") if p.name != "run_state.json"]
+            run_json = sorted(json_candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0] if json_candidates else None
+        if run_json:
+            candidates.append((state_path.stat().st_mtime, run_dir, run_json))
+    if not candidates:
+        return None, None
+    _, run_dir, run_json = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
     return run_dir, run_json
 
 
