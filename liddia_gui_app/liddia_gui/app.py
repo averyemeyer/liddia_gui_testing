@@ -216,7 +216,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     monitor_overview_html = gr.HTML()
                     gr.Markdown("<p class='section-title'>Run Recovery</p>")
                     recovery_html = gr.HTML()
-                    review_monitor_btn = gr.Button("Review monitor run", variant="secondary")
 
         with gr.Tab("Results"):
             with gr.Row():
@@ -320,7 +319,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     preflight_btn.click(refresh_preflight, [target, api_key], [preflight_panel], queue=False, show_progress="hidden")
     latest_btn.click(recover_active_run_with_logs, [], monitor_outputs_components, queue=False, show_progress="hidden")
     clear_monitor_btn.click(clear_monitor_state, [], monitor_outputs_components, queue=False, show_progress="hidden")
-    review_monitor_btn.click(review_active_run, [active_run_dir_state, active_run_json_state], review_outputs_components, queue=False, show_progress="hidden")
     timer.tick(refresh_active_run, [], monitor_outputs_components, queue=False, show_progress="hidden")
     refresh_runs_btn.click(refresh_run_choices, [], [run_selector], queue=False, show_progress="hidden")
     load_btn.click(load_selected_run, [run_selector], review_outputs_components, queue=False, show_progress="hidden")
