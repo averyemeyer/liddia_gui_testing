@@ -16,9 +16,11 @@ from .run_state import (
     ActiveRun,
     clear_lock,
     pid_running,
+    read_last_run,
     read_lock,
     stale_lock,
     write_lock,
+    write_last_run,
     write_run_state,
 )
 from .task_context import merge_task_context, task_context
@@ -85,6 +87,7 @@ def _write_terminal_state(active: ActiveRun, snap: RunSnapshot, status: str) -> 
         stderr_log=active.stderr_log,
         backend_name=active.backend_name,
     )
+    write_last_run(snap.run_dir, snap.run_json)
 
 
 def notify_desktop(title: str, message: str) -> None:
@@ -198,6 +201,13 @@ def recover_active_run() -> tuple[str, RunSnapshot]:
     """Recover the active run from disk, or return an empty snapshot."""
     active = read_lock(LOG_ROOT)
     if not active:
+        run_dir, run_json = read_last_run(LOG_ROOT)
+        if run_dir or run_json:
+            backend = BACKENDS["liddia_v2"]
+            snap = backend.load_snapshot(run_dir, run_json)
+            if snap.data:
+                status = "failed" if snap.data.get("success") is False else "finished"
+                return f"Last run {status}.", snap
         return "No active run.", RunSnapshot(None, None, None)
 
     backend = BACKENDS.get(active.backend_name, BACKENDS["liddia_v2"])

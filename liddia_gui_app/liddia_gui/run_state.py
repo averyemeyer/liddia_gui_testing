@@ -37,6 +37,10 @@ def lock_path(log_root: Path = LOG_ROOT) -> Path:
     return log_root / ".run.lock"
 
 
+def last_run_path(log_root: Path = LOG_ROOT) -> Path:
+    return log_root / ".last_run.json"
+
+
 def read_lock(log_root: Path = LOG_ROOT) -> ActiveRun | None:
     path = lock_path(log_root)
     if not path.exists():
@@ -55,6 +59,35 @@ def write_lock(run: ActiveRun, log_root: Path = LOG_ROOT) -> None:
 
 def clear_lock(log_root: Path = LOG_ROOT) -> None:
     lock_path(log_root).unlink(missing_ok=True)
+
+
+def write_last_run(run_dir: Path | None, run_json: Path | None, log_root: Path = LOG_ROOT) -> None:
+    if not run_dir and not run_json:
+        return
+    log_root.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_dir": str(run_dir) if run_dir else None,
+        "run_json": str(run_json) if run_json else None,
+        "updated_at": datetime.now().isoformat(),
+    }
+    last_run_path(log_root).write_text(json.dumps(payload, indent=2))
+
+
+def read_last_run(log_root: Path = LOG_ROOT) -> tuple[Path | None, Path | None]:
+    path = last_run_path(log_root)
+    if not path.exists():
+        return None, None
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return None, None
+    run_dir = Path(data["run_dir"]) if data.get("run_dir") else None
+    run_json = Path(data["run_json"]) if data.get("run_json") else None
+    if run_json and not run_json.exists():
+        run_json = None
+    if run_dir and not run_dir.exists():
+        run_dir = run_json.parent if run_json else None
+    return run_dir, run_json
 
 
 def pid_running(pid: int | None) -> bool:
