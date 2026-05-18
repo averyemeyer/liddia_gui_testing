@@ -238,10 +238,10 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     results_empty_html = gr.HTML(RESULTS_EMPTY_HTML)
                     pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
                     pool_badge = gr.HTML()
-                    mol_table = gr.Dataframe(value=pd.DataFrame(columns=["Index", "Molecule"]), label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
                     with gr.Row(elem_classes=["results-actions"]):
-                        download_current = gr.DownloadButton("Download current pool", variant="secondary")
-                        download_all = gr.DownloadButton("Download all molecule property sets", variant="secondary")
+                        download_current = gr.DownloadButton("Pool CSV", variant="secondary")
+                        download_all = gr.DownloadButton("All CSV", variant="secondary")
+                    mol_table = gr.Dataframe(value=pd.DataFrame(columns=["Index", "Molecule"]), label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
                     raw_json = gr.Code(label="Latest run JSON", language="json", visible=False)
                 with gr.Column(scale=1, elem_classes=["secondary-panel"]):
                     gr.Markdown("<p class='section-title'>Final Pool Metrics</p>")
