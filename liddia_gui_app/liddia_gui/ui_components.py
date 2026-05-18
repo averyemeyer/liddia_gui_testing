@@ -72,7 +72,15 @@ def run_overview(parsed: dict[str, Any], run_json: Path | None) -> str:
         ("Diversity", final_pool.get("diversity")),
     ]
     body = "".join(f"<div class='k'>{clean(k)}</div><div class='v'>{clean(v)}</div>" for k, v in rows)
-    return f"<div class='label-value-grid'>{body}</div>"
+    loaded = ""
+    if run_json:
+        loaded = (
+            "<div class='loaded-run-label'>"
+            "<span>Loaded run</span>"
+            f"<strong>{html.escape(run_json.parent.name)}</strong>"
+            "</div>"
+        )
+    return loaded + f"<div class='label-value-grid'>{body}</div>"
 
 
 def elapsed_panel(parsed: dict[str, Any]) -> str:

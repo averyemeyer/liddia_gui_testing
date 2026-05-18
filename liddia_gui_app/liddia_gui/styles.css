@@ -17,6 +17,9 @@ footer { display:none!important; }
 .k { color:var(--muted); font-size:12px; font-weight:700; }
 .v { color:var(--text); font-size:13px; font-weight:750; overflow-wrap:anywhere; }
 .label-value-grid { display:grid; grid-template-columns:96px 1fr; gap:7px 12px; align-items:baseline; }
+.loaded-run-label { display:flex; flex-direction:column; gap:2px; border-bottom:1px solid var(--line); padding-bottom:10px; margin-bottom:12px; }
+.loaded-run-label span { color:var(--muted); font-size:12px; font-weight:800; }
+.loaded-run-label strong { color:var(--text); font-size:13px; font-weight:850; overflow-wrap:anywhere; }
 .status-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
 .status-badge { display:inline-flex; width:fit-content; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:800; border:1px solid transparent; }
 .status-success{background:#ecfdf5;color:#047857;border-color:#bbf7d0}.status-failed{background:#fef2f2;color:#b91c1c;border-color:#fecaca}.status-running{background:var(--accent-soft);color:var(--accent-strong);border-color:#c7d2fe}.status-idle{background:#f2f4f7;color:#475467;border-color:#e4e7ec}.status-info{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe}
