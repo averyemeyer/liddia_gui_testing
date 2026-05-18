@@ -108,7 +108,7 @@ class DashboardRender:
         run_json_text = str(run_json or "")
         parsed = enrich_parsed_with_memory(parse_run_data(data), run_dir_text, run_json_text)
         overview = run_overview(parsed, run_json)
-        has_run = bool(run_json_text or run_dir_text)
+        has_run = bool(run_json_text or data)
         metrics = pd.DataFrame(metric_display_rows(parsed), columns=METRIC_COLUMNS)
         pool_ids, selected_pool = pool_choices(run_dir_text, run_json_text)
         trend_data = trend_rows(parsed)

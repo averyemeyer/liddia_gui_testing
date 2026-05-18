@@ -16,3 +16,9 @@ def test_dashboard_render_clears_results_empty_state_when_run_loaded(tmp_path):
     render = DashboardRender.from_snapshot("Loaded run.", tmp_path, run_json, {"task": {"target": "EGFR"}})
 
     assert render.results_empty_html == ""
+
+
+def test_dashboard_render_keeps_results_empty_state_without_run_json(tmp_path):
+    render = DashboardRender.from_snapshot("No run selected.", tmp_path, None, None)
+
+    assert render.results_empty_html == RESULTS_EMPTY_HTML
