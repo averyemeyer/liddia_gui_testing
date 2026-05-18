@@ -261,11 +261,12 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     receptor_style = gr.State("surface")
                     receptor_color = gr.Radio(["blue", "orangeCarbon"], value="blue", label="Receptor surface color")
                     receptor_opacity = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="Receptor opacity")
-                    render_3d = gr.Button("Render 3D", variant="primary")
+                    gr.Markdown("<p class='helper-text'>Upload one or both files, then render. Receptor-only views are supported.</p>")
+                    render_3d = gr.Button("Render structure", variant="primary")
                     viewer_status = gr.State("")
                 with gr.Column(scale=3, elem_classes=["viewer3d-surface"]):
                     viewer_badge = gr.HTML("<span class='viewer3d-badge'>No structure loaded</span>")
-                    viewer_html = gr.HTML()
+                    viewer_html = gr.HTML("<div class='viewer3d-empty'><strong>No structure rendered</strong><span>Upload a ligand pose, receptor, or both, then click Render structure.</span></div>")
                     with gr.Row(elem_classes=["viewer3d-nav"]):
                         prev_pose = gr.Button("Prev pose", variant="secondary")
                         next_pose = gr.Button("Next pose", variant="secondary")
