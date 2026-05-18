@@ -196,8 +196,8 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         preflight_panel = gr.HTML(preflight_html(run_preflight(target=detect_targets()[0], api_key="")))
                         preflight_btn = gr.Button("Refresh system check", variant="secondary")
                     run_btn = gr.Button("Run LIDDIA", variant="primary")
-                    latest_btn = gr.Button("Load latest / recover", variant="secondary")
-                    clear_monitor_btn = gr.Button("Clear monitor", variant="secondary")
+                    latest_btn = gr.Button("Recover latest run", variant="secondary")
+                    clear_monitor_btn = gr.Button("Clear monitor view", variant="secondary")
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Live Monitor</p>")
                     gr.Markdown("<p class='helper-text'>Track progress, elapsed time, current stage, and recent actions.</p>")

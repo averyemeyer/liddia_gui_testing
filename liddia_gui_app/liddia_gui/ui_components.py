@@ -163,7 +163,7 @@ def recovery_card(active: Any | None, *, run_dir: str = "", run_json: str = "", 
         return html.escape(str(value if value not in (None, "") else "—"))
 
     if not active:
-        return "<div class='empty-panel'>No active run lock. Completed runs can be loaded from Results.</div>"
+        return "<div class='empty-panel'>No active run. Completed runs can be loaded from Results.</div>"
 
     started = "—"
     try:
