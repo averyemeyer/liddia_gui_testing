@@ -16,7 +16,7 @@ import pandas as pd
 
 from .backend import RunConfig
 from .config import DEFAULT_MODELS, detect_targets
-from .dashboard import DashboardRender, MonitorRender
+from .dashboard import RESULTS_EMPTY_HTML, DashboardRender, MonitorRender
 from .io_utils import latest_json_in_dir, run_dir_choices, safe_read_json
 from .molecules import (
     download_all_pools_csv,
@@ -88,6 +88,7 @@ def monitor_outputs(render: MonitorRender) -> tuple[Any, ...]:
 def review_outputs(render: DashboardRender) -> tuple[Any, ...]:
     return (
         render.results_overview_html,
+        render.results_empty_html,
         render.metrics_df,
         render.requirements_df,
         render.raw_json,
@@ -234,7 +235,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Molecule Viewer (2D)</p>")
                     gr.Markdown("<p class='helper-text'>Molecule tables and property results appear after a run is loaded or completed.</p>")
-                    gr.HTML("<div class='idle-state results-idle'><strong>No run loaded</strong><span>Load a previous run or review the active run to inspect pools, metrics, and exports.</span></div>")
+                    results_empty_html = gr.HTML(RESULTS_EMPTY_HTML)
                     pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
                     pool_badge = gr.HTML()
                     mol_table = gr.Dataframe(value=pd.DataFrame(columns=["Index", "Molecule"]), label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
@@ -304,6 +305,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     ]
     review_outputs_components = [
         results_overview_html,
+        results_empty_html,
         metrics_df,
         requirements_df,
         raw_json,

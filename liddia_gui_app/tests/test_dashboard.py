@@ -1,10 +1,18 @@
-from liddia_gui_app.liddia_gui.dashboard import DashboardRender
+from liddia_gui_app.liddia_gui.dashboard import RESULTS_EMPTY_HTML, DashboardRender
 
 
 def test_dashboard_render_output_contract_has_named_fields():
     render = DashboardRender.from_snapshot("No run yet.", None, None, None)
 
-    assert len(render.as_outputs()) == 22
+    assert len(render.as_outputs()) == 23
     assert render.status_text == "No run yet."
+    assert render.results_empty_html == RESULTS_EMPTY_HTML
     assert render.run_dir_state == ""
     assert render.run_json_state == ""
+
+
+def test_dashboard_render_clears_results_empty_state_when_run_loaded(tmp_path):
+    run_json = tmp_path / "run.json"
+    render = DashboardRender.from_snapshot("Loaded run.", tmp_path, run_json, {"task": {"target": "EGFR"}})
+
+    assert render.results_empty_html == ""

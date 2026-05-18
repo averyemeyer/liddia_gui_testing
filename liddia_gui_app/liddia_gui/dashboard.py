@@ -19,6 +19,12 @@ MONITOR_METRIC_COLUMNS = ["Metric", "Value"]
 METRIC_COLUMNS = ["Metric", "Min", "Median", "Max"]
 REQUIREMENT_COLUMNS = ["Requirement"]
 TREND_ROLLUP_BASE_COLUMNS = ["Iteration", "Action", "Pool", "Goal", "Size", "Diversity"]
+RESULTS_EMPTY_HTML = (
+    "<div class='idle-state results-idle'>"
+    "<strong>No run loaded</strong>"
+    "<span>Load a previous run or review the active run to inspect pools, metrics, and exports.</span>"
+    "</div>"
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +85,7 @@ class DashboardRender:
     timeline_html: str
     monitor_metrics_df: pd.DataFrame
     results_overview_html: str
+    results_empty_html: str
     metrics_df: pd.DataFrame
     requirements_df: pd.DataFrame
     errors_html: str
@@ -101,6 +108,7 @@ class DashboardRender:
         run_json_text = str(run_json or "")
         parsed = enrich_parsed_with_memory(parse_run_data(data), run_dir_text, run_json_text)
         overview = run_overview(parsed, run_json)
+        has_run = bool(run_json_text or run_dir_text)
         metrics = pd.DataFrame(metric_display_rows(parsed), columns=METRIC_COLUMNS)
         pool_ids, selected_pool = pool_choices(run_dir_text, run_json_text)
         trend_data = trend_rows(parsed)
@@ -119,6 +127,7 @@ class DashboardRender:
             timeline_html=action_timeline(parsed),
             monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed), columns=MONITOR_METRIC_COLUMNS),
             results_overview_html=overview,
+            results_empty_html="" if has_run else RESULTS_EMPTY_HTML,
             metrics_df=metrics,
             requirements_df=requirements,
             errors_html=error_panel(parsed),
@@ -146,6 +155,7 @@ class DashboardRender:
             self.timeline_html,
             self.monitor_metrics_df,
             self.results_overview_html,
+            self.results_empty_html,
             self.metrics_df,
             self.requirements_df,
             self.errors_html,
