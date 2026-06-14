@@ -95,28 +95,88 @@ footer { display:none!important; }
 .mol-thumb:hover { transform:scale(1.65); position:relative; z-index:20; background:#fff; box-shadow:0 12px 28px rgba(15,23,42,.22); }
 .viewer3d-layout { align-items:stretch; }
 .viewer3d-controls { max-width:330px; }
+.viewer3d-upload-label { margin:12px 0 5px; color:var(--text); font-size:12px; font-weight:800; }
+.viewer3d-controls .compact-upload { position:relative; margin-bottom:12px!important; overflow:visible!important; }
 .viewer3d-controls .compact-upload,
 .viewer3d-controls .compact-upload .wrap,
 .viewer3d-controls .compact-upload .file-preview,
 .viewer3d-controls .compact-upload .empty,
 .viewer3d-controls .compact-upload .file-drop {
-  min-height:44px!important;
+  min-height:40px!important;
   height:auto!important;
 }
 .viewer3d-controls .compact-upload .file-preview,
 .viewer3d-controls .compact-upload .empty {
-  padding:6px 8px!important;
+  padding:4px 6px!important;
 }
 .viewer3d-controls .compact-upload .empty,
-.viewer3d-controls .compact-upload .file-drop,
-.viewer3d-controls .compact-upload .file-drop * {
-  font-size:11px!important;
-  line-height:1.2!important;
+.viewer3d-controls .compact-upload .file-drop {
+  color:transparent!important;
+  font-size:0!important;
+  line-height:0!important;
+}
+.viewer3d-controls .compact-upload button[aria-label="Click to upload or drop files"] {
+  position:relative!important;
+  width:100%!important;
+  min-height:38px!important;
+  height:38px!important;
+  margin-top:5px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  border:1px dashed #cbd5e1!important;
+  border-radius:8px!important;
+  background:#fbfcfe!important;
+  color:transparent!important;
+  font-size:0!important;
+  line-height:0!important;
+  overflow:visible!important;
+}
+.viewer3d-controls .compact-upload button[aria-label="Click to upload or drop files"] *:not(svg):not(path) {
+  color:transparent!important;
+  font-size:0!important;
+  line-height:0!important;
+}
+.viewer3d-controls .compact-upload button[aria-label="Click to upload or drop files"]::before {
+  content:"Upload";
+  position:absolute;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  padding:0 8px;
+  background:#fbfcfe;
+  color:#667085;
+  font-size:13px;
+  font-weight:800;
+  line-height:1;
+}
+.viewer3d-controls .compact-upload button[aria-label="Click to upload or drop files"]:hover {
+  border-color:#a5b4fc!important;
+  background:#f8faff!important;
+}
+.viewer3d-controls .compact-upload button[aria-label="Click to upload or drop files"]:hover::after,
+.viewer3d-controls .compact-upload button[aria-label="Click to upload or drop files"]:focus-visible::after {
+  content:"Drop file here or click to upload";
+  position:absolute;
+  z-index:80;
+  left:50%;
+  top:calc(100% + 7px);
+  width:max-content;
+  max-width:230px;
+  transform:translateX(-50%);
+  padding:8px 10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:#fff;
+  color:var(--text);
+  box-shadow:0 10px 22px rgba(17,24,39,.14);
+  font-size:12px;
+  font-weight:700;
+  line-height:1.25;
+  text-align:center;
 }
 .viewer3d-controls .compact-upload svg {
-  width:14px!important;
-  height:14px!important;
-  margin-bottom:2px!important;
+  display:none!important;
 }
 .viewer3d-surface { min-height:680px; background:#fff!important; border:1px solid var(--line)!important; border-radius:8px!important; overflow:hidden!important; box-shadow:0 16px 40px rgba(17,24,39,.075)!important; }
 .viewer3d-surface .block,.viewer3d-surface .wrap { border:0!important; box-shadow:none!important; background:transparent!important; }

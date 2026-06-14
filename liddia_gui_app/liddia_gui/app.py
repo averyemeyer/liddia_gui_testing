@@ -253,8 +253,10 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
             with gr.Row(elem_classes=["viewer3d-layout"]):
                 with gr.Column(scale=1, min_width=280, elem_classes=["secondary-panel", "viewer3d-controls"]):
                     gr.Markdown("<p class='section-title'>3D Setup</p>")
-                    ligand_file = gr.File(label="Ligand / pose", file_types=[".pdb", ".sdf", ".mol2", ".pdbqt"], elem_classes=["compact-upload"])
-                    receptor_file = gr.File(label="Receptor / surface", file_types=[".pdb", ".pdbqt", ".mol2"], elem_classes=["compact-upload"])
+                    gr.Markdown("<p class='viewer3d-upload-label'>Ligand / pose</p>")
+                    ligand_file = gr.File(label="Ligand / pose", show_label=False, file_types=[".pdb", ".sdf", ".mol2", ".pdbqt"], elem_classes=["compact-upload"])
+                    gr.Markdown("<p class='viewer3d-upload-label'>Receptor / surface</p>")
+                    receptor_file = gr.File(label="Receptor / surface", show_label=False, file_types=[".pdb", ".pdbqt", ".mol2"], elem_classes=["compact-upload"])
                     pose_number = gr.State(1)
                     ligand_style = gr.State("stick")
                     ligand_color = gr.State("spectrum")
