@@ -37,6 +37,7 @@ class MonitorRender:
     timeline_html: str
     failure_summary_html: str
     monitor_metrics_df: pd.DataFrame
+    monitor_details: Any
     errors_html: str
     log_diagnostics: str
     logs_text: str
@@ -57,6 +58,7 @@ class MonitorRender:
         run_dir_text = str(run_dir or "")
         run_json_text = str(run_json or "")
         parsed = parse_run_data(data)
+        has_run = bool(run_dir_text or run_json_text or data)
         logs = active_log_text() if include_logs else gr.skip()
         return cls(
             status_text=message,
@@ -67,6 +69,7 @@ class MonitorRender:
             timeline_html=action_timeline(parsed),
             failure_summary_html=failure_summary_html(data, logs if isinstance(logs, str) else ""),
             monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed), columns=MONITOR_METRIC_COLUMNS),
+            monitor_details=gr.update(visible=has_run),
             errors_html=error_panel(parsed),
             log_diagnostics=log_diagnostics_html(logs) if include_logs else gr.skip(),
             logs_text=logs,
@@ -86,6 +89,7 @@ class DashboardRender:
     monitor_metrics_df: pd.DataFrame
     results_overview_html: str
     results_empty_html: str
+    results_content: Any
     metrics_df: pd.DataFrame
     requirements_df: pd.DataFrame
     errors_html: str
@@ -128,6 +132,7 @@ class DashboardRender:
             monitor_metrics_df=pd.DataFrame(compact_metric_display_rows(parsed), columns=MONITOR_METRIC_COLUMNS),
             results_overview_html=overview,
             results_empty_html="" if has_run else RESULTS_EMPTY_HTML,
+            results_content=gr.update(visible=has_run),
             metrics_df=metrics,
             requirements_df=requirements,
             errors_html=error_panel(parsed),
@@ -156,6 +161,7 @@ class DashboardRender:
             self.monitor_metrics_df,
             self.results_overview_html,
             self.results_empty_html,
+            self.results_content,
             self.metrics_df,
             self.requirements_df,
             self.errors_html,

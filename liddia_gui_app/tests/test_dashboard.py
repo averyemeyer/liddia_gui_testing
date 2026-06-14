@@ -4,7 +4,7 @@ from liddia_gui_app.liddia_gui.dashboard import RESULTS_EMPTY_HTML, DashboardRen
 def test_dashboard_render_output_contract_has_named_fields():
     render = DashboardRender.from_snapshot("No run yet.", None, None, None)
 
-    assert len(render.as_outputs()) == 23
+    assert len(render.as_outputs()) == 24
     assert render.status_text == "No run yet."
     assert render.results_empty_html == RESULTS_EMPTY_HTML
     assert render.run_dir_state == ""

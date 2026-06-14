@@ -73,7 +73,10 @@ def pool_ids_for_run(run_dir_str: str, run_json_str: str) -> list[str]:
         pool_id = item.get("action_output")
         if pool_id and pool_id != "EMPTY SET":
             ids.append(str(pool_id))
-    return ids
+    for pool_id, block in (getattr(mem, "stream", {}) or {}).items():
+        if isinstance(block, dict) and isinstance(block.get("data"), pd.DataFrame):
+            ids.append(str(pool_id))
+    return list(dict.fromkeys(ids))
 
 
 def pool_choices(run_dir_str: str, run_json_str: str) -> tuple[list[str], str | None]:
@@ -228,28 +231,21 @@ def selected_pool_badge(pool_id: str | None) -> str:
     return f"<span class='pool-badge'>Viewing pool {pool_id}</span>"
 
 
-def download_current_pool_csv(run_dir_str: str, run_json_str: str, pool_id: str | None):
-    run_dir = resolve_run_dir(run_dir_str, run_json_str)
-    df = _pool_dataframe(run_dir_str, run_json_str, pool_id)
-    if not run_dir or df.empty or not pool_id:
-        return None
-    path = run_dir / f"{pool_id}.csv"
-    df.to_csv(path, index=False)
-    return str(path)
-
-
 def download_all_pools_csv(run_dir_str: str, run_json_str: str):
     run_dir = resolve_run_dir(run_dir_str, run_json_str)
     ids = pool_ids_for_run(run_dir_str, run_json_str)
     if not run_dir or not ids:
         return None
-    zip_path = run_dir / "all_pools.zip"
+    csv_exports: list[tuple[str, str]] = []
+    for pool_id in ids:
+        df = _pool_dataframe(run_dir_str, run_json_str, pool_id)
+        if not df.empty:
+            csv_exports.append((f"{pool_id}.csv", df.to_csv(index=False)))
+    if not csv_exports:
+        return None
+
+    zip_path = run_dir / "all_pool_csvs.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for pool_id in ids:
-            df = _pool_dataframe(run_dir_str, run_json_str, pool_id)
-            if df.empty:
-                continue
-            csv_path = run_dir / f"{pool_id}.csv"
-            df.to_csv(csv_path, index=False)
-            archive.write(csv_path, f"{pool_id}.csv")
+        for filename, csv_text in csv_exports:
+            archive.writestr(filename, csv_text)
     return str(zip_path)

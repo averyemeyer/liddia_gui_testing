@@ -10,9 +10,10 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 export LIDDIA_GUI_PREFERRED_PORT="${LIDDIA_GUI_PREFERRED_PORT:-7961}"
 
-# Optional local environment activation. Edit these for your machine if needed.
+# Optional conda activation. Override CONDA_ENV or set it to an empty string
+# when the desired environment is already active.
 CONDA_SH="${CONDA_SH:-$HOME/anaconda3/etc/profile.d/conda.sh}"
-CONDA_ENV="${CONDA_ENV:-liddia-mac}"
+CONDA_ENV="${CONDA_ENV-liddia-gui}"
 
 if [[ -n "${CONDA_ENV:-}" && -f "$CONDA_SH" ]]; then
   source "$CONDA_SH"

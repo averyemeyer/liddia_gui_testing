@@ -99,28 +99,6 @@ def _heartbeat(path_to_log: str, target: str, logger: Dict, start_time: float, s
         stop_event.wait(interval_s)
 
 
-def _build_pool_stats(mol_id: str, memory: Memory, metric_labels: Dict[str, str]) -> Dict:
-    if mol_id not in memory.stream:
-        return {}
-    block = memory.stream[mol_id]
-    metrics = block.get("metrics") or {}
-    stats = {
-        "pool": mol_id,
-        "size": metrics.get("size"),
-        "diversity": metrics.get("diversity"),
-        "metrics": {},
-    }
-
-    for key, val in metrics.items():
-        if isinstance(val, dict):
-            label = metric_labels.get(key, key)
-            stats["metrics"][label] = {
-                "min": val.get("min"),
-                "max": val.get("max"),
-                "median": val.get("median"),
-            }
-    return stats
-
 def main(target: str = "ABCC8",
          log_dir: str = "log",
          max_iter: int = 10,
@@ -258,20 +236,10 @@ def main(target: str = "ABCC8",
             if "CODE" in action_id:
                 desc = get_desc_from_response(response)
                 action_input += [desc]
-            if action_id.startswith("GENERATE"):
-                label = f"Generating molecules ({action_id})"
-            elif action_id.startswith("OPTIMIZE"):
-                label = f"Optimizing molecule properties ({action_id})"
-            elif action_id.startswith("CODE"):
-                label = f"Running custom chemistry code ({action_id})"
-            else:
-                label = f"Processing action ({action_id})"
-
             action_output, cost, metadata = run_action(action_id, action_input, memory=memory, agent=agent, metrics=task["metrics"], target_pdb=task["pocket"],  drugs=task["drugs"], env_dir=env_dir, log_dir=path_to_log)
             logger[n_iter]["action_output"] = action_output
             resource = resource - cost
             memory.add_history(action_id=action_id, action_input=action_input, action_output=action_output, metadata=metadata)
-            pool_stats = _build_pool_stats(action_output, memory, task["metrics"])
             #EVALUATE
             if action_output in memory.stream.keys():
                 #stop or not

@@ -72,17 +72,17 @@ footer { display:none!important; }
 .monitor-layout { align-items:flex-start; }
 .monitor-layout > .gr-column:first-child { max-width:360px; }
 .monitor-layout > .gr-column:last-child { max-width:360px; }
-.results-actions { justify-content:flex-end!important; gap:8px!important; margin:-2px 0 8px!important; }
-.results-actions > .gr-column { flex:0 0 auto!important; min-width:0!important; }
-.results-actions button {
-  min-width:76px!important;
+.results-toolbar { align-items:center!important; gap:10px!important; margin:2px 0 8px!important; }
+.results-toolbar > .gr-column { min-width:0!important; }
+.results-toolbar button {
+  min-width:190px!important;
   height:34px!important;
   padding:0 10px!important;
   border-radius:8px!important;
   font-size:12px!important;
   font-weight:800!important;
 }
-.pool-badge { display:inline-flex; margin:8px 0 14px; padding:5px 10px; border-radius:999px; border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; font-size:12px; font-weight:800; }
+.pool-badge { display:inline-flex; margin:4px 0; padding:5px 10px; border-radius:999px; border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; font-size:12px; font-weight:800; }
 .resizable-table { overflow-x:auto; }
 .resizable-table table { table-layout:fixed; width:100%; }
 .resizable-table th,.resizable-table td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

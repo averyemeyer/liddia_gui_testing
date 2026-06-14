@@ -1,36 +1,39 @@
 # LIDDIA GUI architecture
 
-This package is organized around:
+The GUI is intentionally isolated in `liddia_gui_app/`. It treats LIDDIA run artifacts as the source of truth and keeps interface state separate from scientific workflow state.
 
-1. Modular design
-2. Backend adapter boundary for LIDDIA v2/v3
-3. Persistent run state so runs continue after the browser page closes
+## Boundaries
 
-## Legacy references
+- `backend.py` contains version-specific command construction.
+- `runner.py` launches detached subprocesses and reconnects to active runs.
+- `run_state.py` manages `.run.lock` and per-run `run_state.json`.
+- `parsers.py` and `molecules.py` adapt normal LIDDIA outputs for display.
+- `dashboard.py` defines monitor and review render contracts.
+- `app.py` contains Gradio layout and event wiring.
+- `viewer3d.py`, `trends.py`, and `reports.py` provide focused review tools.
 
-Earlier GUI scripts are preserved under `../old gui/`. Treat those files as historical references only; the working GUI now lives in the `liddia_gui/` package.
+Monitor state and review state are independent. A live run can continue refreshing while Results and Trends display another run.
 
-## How to run the modular GUI
+## Upstream Boundary
 
-```console
-cd liddia_gui_app
-python -m liddia_gui.app
-```
+The application code, tests, launchers, and GUI environment all live under `liddia_gui_app/`. No modules under `liddia/` are modified.
 
-## Important files
+The only core integration change is in the repository-level `run.py`:
 
-- `backend.py`: version-specific LIDDIA assumptions live here.
-- `run_state.py`: `.run.lock` and `run_state.json` handling.
-- `runner.py`: subprocess launch, recover, and notification logic.
-- `logs.py`: detached stdout/stderr log discovery and tailing.
-- `parsers.py`: pure run JSON parsing.
-- `ui_components.py`: reusable HTML snippets.
-- `app.py`: Gradio layout only.
+- accept `ANTHROPIC_API_KEY` while retaining the original key-file fallback;
+- write atomic, incremental run JSON snapshots and runtime timestamps;
+- preserve parse failures in run output instead of reporting false completion;
+- stop gracefully when the model explicitly declares a satisfied task complete.
 
-## Current status
+These changes allow the GUI to monitor and recover a run without creating a second scientific results format. Removing the incremental snapshot support would reduce live monitoring detail, but completed-run review would still use standard LIDDIA artifacts.
 
-- Launches LIDDIA v2 through a backend adapter with target/model/max-iter.
-- Recovers active runs from disk with `.run.lock` and per-run `run_state.json`.
-- Shows monitor status, elapsed time, progress, action timeline, final pool metrics, requirements, raw JSON, and CLI logs.
-- Keeps metric/help copy centralized in parser/UI helpers so future backends can reuse the same surface.
-- Includes focused tests for backend command generation, parser table contracts, and log recovery helpers.
+## Persistence
+
+The browser is never the process owner. A run is launched as a detached subprocess, and the GUI reconnects using disk state:
+
+- `log/.run.lock` identifies the active process.
+- `log/<run_id>/run_state.json` records GUI recovery metadata.
+- `log/<run_id>/<target>.json` remains the LIDDIA run record.
+- detached stdout and stderr files preserve diagnostics.
+
+GUI recovery metadata is small and disposable; molecule pools, metrics, structures, and task information continue to come from LIDDIA outputs.

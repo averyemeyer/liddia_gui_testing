@@ -1,4 +1,4 @@
-name: liddia-mac
+name: liddia-gui
 channels:
   - conda-forge
 dependencies:
@@ -15,8 +15,9 @@ dependencies:
   - jupyter
   - ipykernel
   - pip:
-      # GUI/runtime pieces present in the working liddia-mac environment.
+      # Direct GUI and LIDDIA runtime dependencies.
       - gradio==6.11.0
+      - pytest>=8,<10
       - py3Dmol==2.5.4
       - plotly==6.6.0
       - fire==0.7.1

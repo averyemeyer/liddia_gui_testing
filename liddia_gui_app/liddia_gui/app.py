@@ -20,14 +20,13 @@ from .dashboard import RESULTS_EMPTY_HTML, DashboardRender, MonitorRender
 from .io_utils import latest_json_in_dir, run_dir_choices, safe_read_json
 from .molecules import (
     download_all_pools_csv,
-    download_current_pool_csv,
     molecule_table,
     selected_pool_badge,
 )
 from .preflight import preflight_can_start, preflight_html, run_preflight
 from .reports import build_report_bundle_file
 from .runner import launch_run, recover_active_run
-from .run_state import clear_last_run, pid_running, read_lock
+from .run_state import pid_running, read_lock
 from .trends import apply_metric_filter
 from .ui_components import help_panel, recovery_card
 from .viewer3d import pose_index_from_selection, pose_rows_for_upload, render_uploaded_structure, shift_pose_index
@@ -92,6 +91,7 @@ def monitor_outputs(render: MonitorRender) -> tuple[Any, ...]:
         render.timeline_html,
         render.failure_summary_html,
         render.monitor_metrics_df,
+        render.monitor_details,
         render.errors_html,
         render.log_diagnostics,
         render.logs_text,
@@ -105,6 +105,9 @@ def review_outputs(render: DashboardRender) -> tuple[Any, ...]:
     return (
         render.results_overview_html,
         render.results_empty_html,
+        render.results_content,
+        render.results_content,
+        render.results_content,
         render.metrics_df,
         render.requirements_df,
         render.raw_json,
@@ -176,11 +179,6 @@ def refresh_preflight(target_name: str, api_key_value: str):
     return preflight_html(run_preflight(target=target_name, api_key=api_key_value))
 
 
-def clear_monitor_state():
-    clear_last_run()
-    return monitor_outputs(render_monitor_snapshot("Monitor cleared.", None, None, None, include_logs=True))
-
-
 with gr.Blocks(title="LIDDIA GUI v2") as demo:
     css_path = Path(__file__).with_name("styles.css")
     gr.HTML(f"<style>{css_path.read_text()}</style>")
@@ -213,7 +211,6 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         preflight_btn = gr.Button("Refresh system check", variant="secondary")
                     run_btn = gr.Button("Run LIDDIA", variant="primary")
                     latest_btn = gr.Button("Recover latest run", variant="secondary")
-                    clear_monitor_btn = gr.Button("Clear monitor view", variant="secondary")
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Live Monitor</p>")
                     gr.Markdown("<p class='helper-text'>Track progress, elapsed time, current stage, and recent actions.</p>")
@@ -228,7 +225,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                         log_diagnostics = gr.HTML("")
                         logs_text = gr.Textbox(label="CLI stdout/stderr", value="", lines=18, interactive=False)
                     timer = gr.Timer(10.0)
-                with gr.Column(scale=1, elem_classes=["secondary-panel"]):
+                with gr.Column(scale=1, visible=False, elem_classes=["secondary-panel"]) as monitor_details:
                     gr.Markdown("<p class='section-title'>Metrics Snapshot</p>")
                     monitor_metrics_df = gr.Dataframe(value=initial_monitor.monitor_metrics_df, label="Final pool metrics", interactive=False, wrap=True, show_label=True, datatype="html", column_widths=["55%", "45%"], max_height=300)
                     gr.Markdown("<p class='section-title'>Run Overview</p>")
@@ -244,22 +241,22 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     gr.Markdown("<p class='section-title'>Load Previous Run</p>")
                     from .config import LOG_ROOT
                     run_selector = gr.Dropdown(choices=run_dir_choices(LOG_ROOT), label="Run folder")
-                    refresh_runs_btn = gr.Button("Refresh run list", variant="secondary")
-                    load_btn = gr.Button("Load selected run")
-                    review_active_btn = gr.Button("Review active run", variant="secondary")
-                    report_file = gr.DownloadButton("Download loaded run report", value=None, variant="secondary")
+                    refresh_runs_btn = gr.Button("Refresh runs", variant="secondary")
+                    load_btn = gr.Button("Load run")
+                    review_active_btn = gr.Button("View active run", variant="secondary")
+                    report_file = gr.DownloadButton("Download run report", value=None, variant="secondary", visible=False)
                 with gr.Column(scale=3, elem_classes=["primary-panel"]):
                     gr.Markdown("<p class='section-title'>Molecule Viewer (2D)</p>")
                     gr.Markdown("<p class='helper-text'>Molecule tables and property results appear after a run is loaded or completed.</p>")
                     results_empty_html = gr.HTML(RESULTS_EMPTY_HTML)
-                    pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
-                    pool_badge = gr.HTML()
-                    with gr.Row(elem_classes=["results-actions"]):
-                        download_current = gr.DownloadButton("Pool CSV", variant="secondary")
-                        download_all = gr.DownloadButton("All CSV", variant="secondary")
-                    mol_table = gr.Dataframe(value=pd.DataFrame(columns=["Index", "Molecule"]), label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
-                    raw_json = gr.Code(label="Latest run JSON", language="json", visible=False)
-                with gr.Column(scale=1, elem_classes=["secondary-panel"]):
+                    with gr.Column(visible=False) as results_content:
+                        pool_select = gr.Dropdown(label="Pool", choices=[], value=None)
+                        with gr.Row(elem_classes=["results-toolbar"]):
+                            pool_badge = gr.HTML(scale=1)
+                            download_all = gr.DownloadButton("Download all pool CSVs", variant="secondary", scale=0, min_width=190)
+                        mol_table = gr.Dataframe(value=pd.DataFrame(columns=["Index", "Molecule"]), label="Molecule properties", interactive=True, wrap=False, datatype="html", elem_classes=["resizable-table", "mol-prop-table"], max_height=620, pinned_columns=2)
+                        raw_json = gr.Code(label="Latest run JSON", language="json", visible=False)
+                with gr.Column(scale=1, visible=False, elem_classes=["secondary-panel"]) as results_metrics_panel:
                     gr.Markdown("<p class='section-title'>Final Pool Metrics</p>")
                     metrics_df = gr.Dataframe(value=pd.DataFrame(columns=["Metric", "Min", "Median", "Max"]), label="Final pool metrics", interactive=False, wrap=True, show_label=False, datatype="html", max_height=320)
                     gr.Markdown("<p class='section-title'>Task Requirements</p>")
@@ -329,6 +326,7 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
         timeline_html,
         failure_summary,
         monitor_metrics_df,
+        monitor_details,
         errors_html,
         log_diagnostics,
         logs_text,
@@ -339,6 +337,9 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     review_outputs_components = [
         results_overview_html,
         results_empty_html,
+        results_content,
+        results_metrics_panel,
+        report_file,
         metrics_df,
         requirements_df,
         raw_json,
@@ -355,13 +356,11 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     run_btn.click(start_run, [target, max_iter, model, api_key], monitor_outputs_components, queue=False, show_progress="hidden")
     preflight_btn.click(refresh_preflight, [target, api_key], [preflight_panel], queue=False, show_progress="hidden")
     latest_btn.click(recover_active_run_with_logs, [], monitor_outputs_components, queue=False, show_progress="hidden")
-    clear_monitor_btn.click(clear_monitor_state, [], monitor_outputs_components, queue=False, show_progress="hidden")
     timer.tick(refresh_active_run, [], monitor_outputs_components, queue=False, show_progress="hidden")
     refresh_runs_btn.click(refresh_run_choices, [], [run_selector], queue=False, show_progress="hidden")
     load_btn.click(load_selected_run, [run_selector], review_outputs_components, queue=False, show_progress="hidden")
     review_active_btn.click(review_active_run, [active_run_dir_state, active_run_json_state], review_outputs_components, queue=False, show_progress="hidden")
     pool_select.change(update_pool_view, [review_run_dir_state, review_run_json_state, pool_select], [pool_badge, mol_table], queue=False, show_progress="hidden")
-    download_current.click(download_current_pool_csv, [review_run_dir_state, review_run_json_state, pool_select], [download_current], queue=False)
     download_all.click(download_all_pools_csv, [review_run_dir_state, review_run_json_state], [download_all], queue=False)
     report_file.click(build_report_bundle_file, [review_run_dir_state, review_run_json_state], [report_file], queue=False)
     render_inputs = [ligand_file, receptor_file, ligand_style, ligand_color, receptor_style, receptor_color, receptor_opacity, pose_number]

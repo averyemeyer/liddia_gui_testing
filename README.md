@@ -8,17 +8,17 @@ In our [paper](https://arxiv.org/abs/2502.13959), we introduce a LLM-based agent
 
 ## Quickstart
 
-**Note: The current code for `LIDDiA` randomly sample molecules from TDC ZINC rather than using Pocket2Mol**
+**Note: The current code for `LIDDiA` randomly samples molecules from TDC ZINC rather than using Pocket2Mol.**
 
-The environment dependencies for `conda` are in `environment.yml`.
+The conda dependencies are provided in `environment.yml`.
 
-Set your Anthropic API key via environment variable (recommended):
+Set the Anthropic API key:
 
 ```console
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-You can also place the key in `my-anthropic-key.txt` (ignored by git).
+The original `my-anthropic-key.txt` key-file method remains supported.
 
 ```console
 python run.py --target EGFR --max_iter 10 --model "claude-3-5-sonnet-20241022"
@@ -26,39 +26,11 @@ python run.py --target EGFR --max_iter 10 --model "claude-3-5-sonnet-20241022"
 
 The argument for `--target` must be one of the targets in `dataset/pdb/`. The list of arguments for `--model` is available [here](https://docs.claude.com/en/docs/about-claude/models/overview).
 
-## Setup
+## Optional GUI
 
-Create the environment:
+This fork adds a modular local GUI under `liddia_gui_app/`. See the [GUI README](liddia_gui_app/README.md) for the short installation and launch instructions.
 
-```console
-conda env create -f environment.yml
-conda activate liddia
-```
-
-For GUI users, `liddia_gui_app/environment.yml` is also provided as a GUI-friendly starting point based on the working `liddia-mac` development environment.
-
-## GUI
-
-This fork includes a modular local Gradio GUI in `liddia_gui_app/`. The GUI-specific setup, launch commands, architecture notes, troubleshooting, and tests live in `liddia_gui_app/README.md`.
-
-## Changes From Upstream
-
-This repository is based on the upstream LIDDIA source at [ninglab/LIDDIA](https://github.com/ninglab/LIDDIA/tree/main). Compared with upstream `main`, this working branch adds:
-
-- A modular GUI application under `liddia_gui_app/` for launching, monitoring, recovering, reviewing, and exporting LIDDIA runs.
-- GUI-focused launchers for macOS/Linux and Windows, plus a GUI environment file based on the working `liddia-mac` setup.
-- A run-artifact reader layer that relies on normal LIDDIA outputs in `log/<run_id>/`, rather than one-off GUI-only data files.
-- Focused tests for the GUI adapters, parsers, run-state recovery, report export, trends, molecule tables, logs, and 3D viewer.
-- Archived earlier GUI prototypes under `old gui/` so historical versions are preserved but no longer treated as the active app.
-- `.gitignore` cleanup for local runtime artifacts such as logs, downloaded data, docking temp files, pickles, Python caches, and API key files.
-
-This branch also contains local changes to `run.py` that make runs easier to monitor from the GUI:
-
-- Anthropic keys can be read from `ANTHROPIC_API_KEY` or `my-anthropic-key.txt`.
-- Runs write incremental JSON snapshots with runtime metadata while they are active.
-- Runtime metadata includes current iteration, max iterations, timestamps, and elapsed seconds.
-- A lightweight heartbeat writes best-effort progress snapshots for recovery after browser/tab closure.
-- Model responses that indicate completion without a new action are handled more gracefully.
+The GUI is isolated from the `liddia/` package and reads normal LIDDIA run outputs. The small `run.py` integration adds environment-based API key loading and incremental run snapshots for live monitoring and recovery. Details are in [the GUI architecture notes](liddia_gui_app/ARCHITECTURE.md).
 
 ## Citation
 

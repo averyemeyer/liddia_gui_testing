@@ -1,200 +1,99 @@
 # LIDDIA GUI v2
 
-Modular Gradio interface for launching LIDDIA runs, monitoring progress, reviewing molecule pools, inspecting 3D structures, and exporting reports.
+A local Gradio interface for launching, monitoring, recovering, and reviewing LIDDIA runs.
 
-This is the current modular Gradio GUI. GUI concerns live in `liddia_gui_app/liddia_gui/`, while run data comes from normal LIDDIA artifacts under `log/<run_id>/`.
+## Start Here
 
-## Current Status
-
-- Monitor tab launches and recovers LIDDIA runs.
-- Results tab loads completed or previous runs from disk.
-- Results and Trends use a separate review state, so a live Monitor refresh should not overwrite a run being reviewed.
-- 3D Viewer supports ligand/pose files and receptor surface inspection.
-- Help page includes workflow placeholders and metric hover tooltips.
-- Run reports export a bundle with text, JSON, and final-pool metric CSV.
-
-## Setup
-
-Use a Python environment that has LIDDIA's runtime dependencies installed. At minimum, the GUI/runtime currently expects packages such as Gradio, Fire, pandas, RDKit, Plotly, py3Dmol, and the LIDDIA docking stack used by the main repository.
-
-Example with conda:
-
-```bash
-conda activate liddia-mac
-```
-
-If you are setting this up on a new machine, start with the GUI environment file:
+From the repository root, create the environment once:
 
 ```bash
 conda env create -f liddia_gui_app/environment.yml
-conda activate liddia-mac
+conda activate liddia-gui
 ```
 
-That file is based on the working local `liddia-mac` environment and keeps the direct GUI/LIDDIA dependencies explicit instead of exporting every transitive package from the development machine.
-
-## Launch
-
-Recommended shell launchers:
+Then launch the GUI.
 
 macOS/Linux:
 
 ```bash
-cd /path/to/LIDDIA
-chmod +x liddia_gui_app/launch_gui.command
 ./liddia_gui_app/launch_gui.command
 ```
 
-The macOS/Linux launcher activates `CONDA_ENV=liddia-mac` by default on the original development machine. For another environment, edit `CONDA_ENV` in the script or launch with:
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\liddia_gui_app\launch_gui.ps1
+```
+
+Open the local URL printed in the terminal. The GUI starts at port `7961` when available and automatically tries another port if needed.
+
+To use an existing conda environment on macOS/Linux:
 
 ```bash
 CONDA_ENV=my-liddia-env ./liddia_gui_app/launch_gui.command
 ```
 
-You can also set `CONDA_SH` if conda is installed somewhere other than `~/anaconda3`.
-
-Windows PowerShell:
-
-```powershell
-cd C:\path\to\LIDDIA
-powershell -ExecutionPolicy Bypass -File .\liddia_gui_app\launch_gui.ps1
-```
-
-Manual launch from the repository root:
+To launch manually:
 
 ```bash
-cd /path/to/LIDDIA/liddia_gui_app
+cd liddia_gui_app
 python -m liddia_gui.app
 ```
 
-Open the local URL printed by Gradio, usually:
+## Workflow
 
-```text
-http://127.0.0.1:7960/
-```
+1. Open Monitor and choose a target, iteration budget, and model.
+2. Enter an Anthropic API key and select `Run LIDDIA`.
+3. Follow progress, elapsed time, actions, and logs.
+4. Open Results to inspect pools, metrics, requirements, and exports.
+5. Use Trends for iteration-level metric changes.
+6. Use 3D Viewer for ligand poses, Vina scores, and receptor surfaces.
 
-To force a port:
+Runs continue independently of the browser tab. Reopen the GUI and select `Recover latest run` to reconnect. Results and Trends maintain a separate review selection, so a previous run can be inspected while another run is active.
 
-```bash
-GRADIO_SERVER_PORT=7961 python -m liddia_gui.app
-```
+## Run Data
 
-On Windows PowerShell:
+The GUI reads standard LIDDIA artifacts rather than maintaining a separate results format:
 
-```powershell
-$env:GRADIO_SERVER_PORT = "7961"
-python -m liddia_gui.app
-```
+- `log/<run_id>/<target>.json`
+- `log/<run_id>/<target>_memory.pkl`
+- structure and docking files produced by LIDDIA
 
-macOS example from the original development machine:
+Small GUI recovery files are stored alongside these outputs:
 
-```bash
-cd /Users/meyer.1938/Desktop/LIDDIA/liddia_gui_app
-GRADIO_SERVER_PORT=7961 /Users/meyer.1938/anaconda3/envs/liddia-mac/bin/python -m liddia_gui.app
-```
+- `log/.run.lock`
+- `log/<run_id>/run_state.json`
+- detached stdout and stderr logs
 
-The app picks the first available port from `7960` upward unless `GRADIO_SERVER_PORT` is set. Use the same Python environment for the GUI that you use to run LIDDIA itself. If you launch the GUI in one environment but want run subprocesses to use another Python, set `LIDDIA_RUN_PYTHON=/path/to/python`.
+Exports are written to the selected run folder.
 
-## Typical Workflow
+## Configuration
 
-1. Open the Monitor tab.
-2. Select target, budget, model, and enter an Anthropic API key.
-3. Click `Run LIDDIA`.
-4. Watch status, elapsed time, action timeline, logs, and recovery metadata.
-5. Use Results to load a previous run or click `Review active run`.
-6. Use Trends to inspect median metric movement across iterations.
-7. Use 3D Viewer to upload ligand/pose/receptor files for visual inspection.
+Useful optional environment variables:
 
-## Run Persistence
+| Variable | Purpose |
+| --- | --- |
+| `CONDA_ENV` | Conda environment activated by the macOS/Linux launcher |
+| `CONDA_SH` | Path to `conda.sh` when conda is installed outside `~/anaconda3` |
+| `GRADIO_SERVER_PORT` | Require a specific GUI port |
+| `LIDDIA_GUI_PREFERRED_PORT` | First port to try |
+| `LIDDIA_RUN_PYTHON` | Python executable used for LIDDIA subprocesses |
 
-Browser tabs are not the source of truth. The GUI writes and reads disk state:
-
-- `log/.run.lock`: active process lock and recovery metadata.
-- `log/<run_id>/run_state.json`: per-run status, pid, target, model, run JSON path, and log paths.
-- `log/<run_id>/<target>.json`: LIDDIA run snapshot.
-- `log/.run_<timestamp>.stdout.log` and `.stderr.log`: detached subprocess logs.
-
-If the browser is closed, the run process should continue. Reopen the app and use `Load latest / recover` in Monitor.
-
-## Results And Live Runs
-
-The Monitor tab tracks the active run. Results and Trends track the review run.
-
-This means you can monitor a live run while browsing a previous run. Use `Review active run` when you want Results and Trends to point back to the active run.
-
-Molecule-level pool browsing depends on LIDDIA's normal `*_memory.pkl` artifact. At present, that artifact is expected after the run writes it; the GUI does not modify `run.py` to stream memory during an active run.
+The API key entered in the GUI is passed to the run subprocess as `ANTHROPIC_API_KEY`; it is not written into the repository.
 
 ## Troubleshooting
 
-### Port already in use
-
-Set another port:
+**Port already in use:** allow the launcher to choose another port, or set one explicitly:
 
 ```bash
-GRADIO_SERVER_PORT=7962 python -m liddia_gui.app
+GRADIO_SERVER_PORT=7962 ./liddia_gui_app/launch_gui.command
 ```
 
-Windows PowerShell:
+**Missing `fire`, RDKit, or another package:** the GUI and LIDDIA subprocess are using different Python environments. Relaunch from the environment used to install `environment.yml`.
 
-```powershell
-$env:GRADIO_SERVER_PORT = "7962"
-python -m liddia_gui.app
-```
+**Missing `MolKit` or `protein.pdbqt`:** receptor preparation is not available in the current environment. Confirm the AutoDockTools dependency installed successfully.
 
-### `No module named 'fire'`
-
-The app or subprocess is using a Python environment without Fire installed. Activate the LIDDIA environment, install `fire`, and relaunch:
-
-```bash
-python -m pip install fire
-python -m liddia_gui.app
-```
-
-### `RDKit unavailable`
-
-The GUI process cannot import RDKit, usually because it is running under a different environment than LIDDIA. Install RDKit in the active environment or relaunch from the correct environment.
-
-Conda is usually the easiest RDKit install path:
-
-```bash
-conda install -c conda-forge rdkit
-```
-
-### `No module named 'MolKit'`
-
-Docking receptor preparation is missing an AutoDockTools/MGLTools dependency. Vina scores may fail until this environment dependency is fixed. This is a LIDDIA runtime environment issue, not a Gradio rendering issue.
-
-### `protein.pdbqt does not exist`
-
-Usually follows the `MolKit` failure above. Receptor preparation did not produce the expected `protein.pdbqt`, so Vina cannot score the molecule.
-
-### UI freezes during active monitoring
-
-The timer uses a lightweight Monitor refresh path, but heavy docking or model work can still make the machine busy. Use `Load latest / recover` manually if you want full logs; the background timer intentionally avoids rebuilding Results and Trends.
-
-### Windows path notes
-
-Use normal Windows paths in PowerShell, for example:
-
-```powershell
-cd C:\Users\<you>\Desktop\LIDDIA\liddia_gui_app
-python -m liddia_gui.app
-```
-
-The GUI stores run artifacts under the repository's `log/` directory regardless of operating system.
-
-## Module Map
-
-- `app.py`: Gradio layout and event wiring.
-- `backend.py`: LIDDIA backend adapter and subprocess command.
-- `runner.py`: launch, recovery, detached logs, notifications, active lock handling.
-- `run_state.py`: `.run.lock` and `run_state.json`.
-- `dashboard.py`: named render contracts for Monitor and full review views.
-- `parsers.py`: pure run JSON parsing and metric display helpers.
-- `molecules.py`: memory/pool loading, RDKit molecule thumbnails, CSV exports.
-- `trends.py`: metric trend rows, filtering, plots, iteration rollups.
-- `viewer3d.py`: 3Dmol HTML generation and PDBQT pose handling.
-- `reports.py`: report bundle export.
-- `ui_components.py`: reusable HTML panels.
+**Run interrupted in the browser:** reopen the GUI and use `Recover latest run`. The browser is not the source of truth for process state.
 
 ## Tests
 
@@ -204,11 +103,4 @@ From the repository root:
 python -m pytest liddia_gui_app/tests
 ```
 
-The app should be launched with an environment that has LIDDIA runtime dependencies. Tests can run from any environment that has the test dependencies installed.
-
-## Current Limitations
-
-- Provider switching is UI-only for now; LIDDIA still runs through its current backend behavior.
-- Open-source/local LLM support should be added behind a future LIDDIA provider abstraction, not by hard-coding GUI-specific behavior.
-- The GUI does not currently stream molecule pool memory mid-action.
-- Docking depends on external AutoDockTools/MolKit compatibility.
+Implementation boundaries and the upstream integration notes are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
