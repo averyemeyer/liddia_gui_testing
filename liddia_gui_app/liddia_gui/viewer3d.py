@@ -40,6 +40,34 @@ def extract_pdbqt_vina_score(block_text: str) -> float | None:
     return None
 
 
+def pdbqt_pose_rows(model_text: str) -> list[list[int | float | str]]:
+    """Return compact pose metadata for a multi-model PDBQT file."""
+    rows: list[list[int | float | str]] = []
+    pose_count = count_pdbqt_poses(model_text)
+    for pose_index in range(1, pose_count + 1):
+        pose_text = extract_pdbqt_pose(model_text, pose_index) or ""
+        vina_score = extract_pdbqt_vina_score(pose_text)
+        rows.append([pose_index, round(vina_score, 3) if vina_score is not None else "—"])
+    return rows
+
+
+def pose_rows_for_upload(ligand_file: Any) -> list[list[int | float | str]]:
+    """Read pose metadata from an uploaded PDBQT file."""
+    path, text = _read_upload(ligand_file)
+    if not path or path.suffix.lower() != ".pdbqt":
+        return []
+    return pdbqt_pose_rows(text)
+
+
+def pose_index_from_selection(index: Any) -> int:
+    """Convert a Gradio dataframe selection index to a one-based pose index."""
+    row_index = index[0] if isinstance(index, (list, tuple)) else index
+    try:
+        return max(1, int(row_index) + 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def pdbqt_to_pdb(block_text: str) -> str:
     """Convert PDBQT atom records to PDB-ish lines for reliable 3Dmol parsing."""
     out: list[str] = []
@@ -242,7 +270,11 @@ def render_uploaded_structure(
     if pose_total:
         pose_i = max(1, min(int(pose_index or 1), pose_total))
         suffix = f" Vina {vina_score:.2f}" if vina_score is not None else ""
-        return f"Rendered pose {pose_i} of {pose_total}.{suffix}", html, _badge(f"Pose {pose_i}/{pose_total}{' • Vina %.2f' % vina_score if vina_score is not None else ''}")
+        return (
+            f"Rendered pose {pose_i} of {pose_total}.{suffix}",
+            html,
+            _badge(f"Pose {pose_i}/{pose_total}{' • Vina %.2f' % vina_score if vina_score is not None else ''}"),
+        )
     if ligand_path and receptor_path:
         return f"Rendered {ligand_path.name} with {receptor_path.name}.", html, _badge("Ligand + receptor")
     if receptor_path:

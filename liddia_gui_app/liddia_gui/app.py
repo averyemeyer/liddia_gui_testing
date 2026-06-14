@@ -30,7 +30,7 @@ from .runner import launch_run, recover_active_run
 from .run_state import clear_last_run, pid_running, read_lock
 from .trends import apply_metric_filter
 from .ui_components import help_panel, recovery_card
-from .viewer3d import render_uploaded_structure, shift_pose_index
+from .viewer3d import pose_index_from_selection, pose_rows_for_upload, render_uploaded_structure, shift_pose_index
 
 
 def choose_server_port(host: str = "127.0.0.1", preferred: int = 7960) -> int:
@@ -48,6 +48,22 @@ def choose_server_port(host: str = "127.0.0.1", preferred: int = 7960) -> int:
                 continue
             return port
     raise OSError(f"No free local ports found in {preferred}-{preferred + 99}.")
+
+
+def inspect_uploaded_poses(ligand_file: Any) -> tuple[int, Any, Any]:
+    rows = pose_rows_for_upload(ligand_file)
+    show_table = len(rows) > 1
+    return 1, gr.update(value=rows), gr.update(visible=show_table)
+
+
+def render_3d_view(*inputs: Any) -> tuple[Any, ...]:
+    status, viewer_html, badge = render_uploaded_structure(*inputs)
+    rows = pose_rows_for_upload(inputs[0])
+    return status, viewer_html, badge, gr.update(value=rows), gr.update(visible=len(rows) > 1)
+
+
+def select_pose_from_table(evt: gr.SelectData) -> int:
+    return pose_index_from_selection(evt.index)
 
 
 def render_snapshot(message: str, run_dir: Path | None, run_json: Path | None, data: dict[str, Any] | None) -> DashboardRender:
@@ -272,6 +288,20 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
                     with gr.Row(elem_classes=["viewer3d-nav"]):
                         prev_pose = gr.Button("Prev pose", variant="secondary")
                         next_pose = gr.Button("Next pose", variant="secondary")
+                with gr.Column(scale=1, min_width=220, visible=False, elem_classes=["secondary-panel", "viewer3d-pose-panel"]) as pose_panel:
+                    gr.Markdown("<p class='section-title'>Docked Poses</p>")
+                    gr.Markdown("<p class='helper-text'>Select a pose to view its docking position.</p>")
+                    pose_table = gr.Dataframe(
+                        value=[],
+                        headers=["Pose", "Vina Score"],
+                        datatype=["number", "str"],
+                        interactive=False,
+                        show_label=False,
+                        wrap=False,
+                        max_height=520,
+                        buttons=[],
+                        elem_classes=["viewer3d-pose-table"],
+                    )
 
         with gr.Tab("Trends"):
             with gr.Row(elem_classes=["trends-layout"]):
@@ -335,9 +365,12 @@ with gr.Blocks(title="LIDDIA GUI v2") as demo:
     download_all.click(download_all_pools_csv, [review_run_dir_state, review_run_json_state], [download_all], queue=False)
     report_file.click(build_report_bundle_file, [review_run_dir_state, review_run_json_state], [report_file], queue=False)
     render_inputs = [ligand_file, receptor_file, ligand_style, ligand_color, receptor_style, receptor_color, receptor_opacity, pose_number]
-    render_3d.click(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
-    prev_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(-1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
-    next_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(1)], [pose_number]).then(render_uploaded_structure, render_inputs, [viewer_status, viewer_html, viewer_badge])
+    render_outputs = [viewer_status, viewer_html, viewer_badge, pose_table, pose_panel]
+    ligand_file.change(inspect_uploaded_poses, [ligand_file], [pose_number, pose_table, pose_panel], queue=False, show_progress="hidden")
+    render_3d.click(render_3d_view, render_inputs, render_outputs)
+    prev_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(-1)], [pose_number]).then(render_3d_view, render_inputs, render_outputs)
+    next_pose.click(shift_pose_index, [ligand_file, pose_number, gr.State(1)], [pose_number]).then(render_3d_view, render_inputs, render_outputs)
+    pose_table.select(select_pose_from_table, [], [pose_number], queue=False, show_progress="hidden").then(render_3d_view, render_inputs, render_outputs)
     trend_metric_select.change(apply_metric_filter, [trend_state, trend_metric_select], [trend_plot_component], show_progress="hidden")
 
 

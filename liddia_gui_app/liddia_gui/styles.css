@@ -187,6 +187,11 @@ footer { display:none!important; }
 .viewer3d-empty span { max-width:360px; font-size:13px; }
 .viewer3d-nav { padding:0 14px 14px!important; gap:10px!important; }
 .viewer3d-nav button { font-weight:800!important; }
+.viewer3d-pose-panel { max-width:270px; align-self:flex-start; }
+.viewer3d-pose-table table { table-layout:fixed; width:100%; }
+.viewer3d-pose-table th,.viewer3d-pose-table td { height:42px!important; padding:8px 10px!important; text-align:right!important; cursor:pointer; }
+.viewer3d-pose-table th:first-child,.viewer3d-pose-table td:first-child { width:72px; text-align:center!important; }
+.viewer3d-pose-table tbody tr:hover td { background:#f4f6ff!important; }
 .trends-layout { align-items:flex-start; }
 .trend-rollup { max-width:520px; }
 .trend-rollup table { table-layout:auto; }

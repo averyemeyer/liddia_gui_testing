@@ -1,6 +1,15 @@
 from types import SimpleNamespace
 
-from liddia_gui_app.liddia_gui.viewer3d import count_pdbqt_poses, extract_pdbqt_pose, extract_pdbqt_vina_score, pdbqt_to_pdb, render_uploaded_structure
+from liddia_gui_app.liddia_gui.viewer3d import (
+    count_pdbqt_poses,
+    extract_pdbqt_pose,
+    extract_pdbqt_vina_score,
+    pdbqt_pose_rows,
+    pdbqt_to_pdb,
+    pose_index_from_selection,
+    pose_rows_for_upload,
+    render_uploaded_structure,
+)
 
 
 PDBQT = """MODEL 1
@@ -22,6 +31,32 @@ def test_pdbqt_pose_helpers():
     pdb = pdbqt_to_pdb(pose)
     assert "ATOM" in pdb
     assert "  O" in pdb
+
+
+def test_pdbqt_pose_table_helpers(tmp_path):
+    assert pdbqt_pose_rows(PDBQT) == [[1, -7.5], [2, -8.1]]
+    ligand = tmp_path / "poses.pdbqt"
+    ligand.write_text(PDBQT)
+    assert pose_rows_for_upload(SimpleNamespace(name=str(ligand))) == [[1, -7.5], [2, -8.1]]
+    assert pose_index_from_selection((1, 0)) == 2
+    assert pose_index_from_selection(0) == 1
+
+
+def test_multi_pose_render_uses_one_based_label(tmp_path):
+    ligand = tmp_path / "poses.pdbqt"
+    ligand.write_text(PDBQT)
+    status, _, badge = render_uploaded_structure(
+        SimpleNamespace(name=str(ligand)),
+        None,
+        "stick",
+        "spectrum",
+        "surface",
+        "blue",
+        0.85,
+        2,
+    )
+    assert "pose 2 of 2" in status
+    assert "Pose 2/2" in badge
 
 
 def test_receptor_only_render(tmp_path):
